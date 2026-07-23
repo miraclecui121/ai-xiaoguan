@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI销冠</title>
+  <link rel="stylesheet" href="css/style.css?v=20260723b">
+</head>
+<body>
+  <div id="loginPage" class="login-page" style="display:none">
+    <div class="login-box" id="loginBox"></div>
+  </div>
+
+  <div id="app" style="display:none">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="logo" onclick="App.navigate('dashboard')">
+          <span class="logo-icon">冠</span>
+          <span class="logo-text">AI<span class="logo-accent">销冠</span></span>
+          <span class="logo-sub" id="topbarEntName"></span>
+        </div>
+      </div>
+
+      <div class="topbar-center">
+        <div class="global-search">
+          <span class="search-icon">🔍</span>
+          <input
+            type="text"
+            id="globalSearch"
+            placeholder="搜索客户 / 联系人 / 商机..."
+            oninput="App.globalSearch(this.value)"
+          >
+          <div id="searchResults" class="search-results"></div>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="notif-bell-wrap" id="notifBellWrap">
+          <button class="btn-icon notif-bell" id="notifBell" onclick="App.toggleNotifPanel(event)" title="消息通知">
+            🔔
+            <span class="notif-badge" id="notifBadge" style="display:none">0</span>
+          </button>
+          <div class="notif-panel" id="notifPanel" style="display:none" onclick="event.stopPropagation()">
+            <div class="notif-panel-header">
+              <span>📬 消息通知</span>
+              <button class="btn btn-ghost btn-sm" onclick="App.markAllNotifRead()">全部已读</button>
+            </div>
+            <div class="notif-list" id="notifList">
+              <div class="mu-empty">暂无消息</div>
+            </div>
+          </div>
+        </div>
+
+        <button class="btn-icon" onclick="App.navigate('ai')" title="AI助手"><span class="topbar-action-mark">冠</span> AI助手</button>
+        <div class="user-chip" onclick="Auth.logout()" title="点击注销" style="cursor:pointer">
+          <span class="avatar" id="topbarAvatar"></span>
+          <span class="user-name" id="topbarUserName"></span>
+          <span style="font-size:11px;color:var(--text-secondary);margin-left:2px">退出 ▾</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="body-wrap">
+      <aside class="sidebar" id="sidebar">
+        <div class="menu-group">
+          <div class="menu-title">工作台</div>
+          <a class="menu-item active" data-route="dashboard" onclick="App.navigate('dashboard')"><span class="mi">▦</span>数据看板</a>
+          <a class="menu-item" data-route="ai" onclick="App.navigate('ai')"><span class="mi">冠</span>AI销冠助手</a>
+        </div>
+
+        <div class="menu-group">
+          <div class="menu-title">数据底座</div>
+          <a class="menu-item" data-route="customer" onclick="App.navigate('customer')"><span class="mi">企</span>客户管理</a>
+          <a class="menu-item" data-route="contact" onclick="App.navigate('contact')"><span class="mi">联</span>联系人管理</a>
+          <a class="menu-item" data-route="opportunity" onclick="App.navigate('opportunity')"><span class="mi">机</span>商机管理</a>
+          <a class="menu-item" data-route="customer-pool" onclick="App.navigate('customer-pool')"><span class="mi">池</span>客户公海</a>
+        </div>
+
+        <div class="menu-group">
+          <div class="menu-title">业务协同</div>
+          <a class="menu-item" data-route="followup" onclick="App.navigate('followup')"><span class="mi">记</span>跟进记录</a>
+          <a class="menu-item" data-route="schedule" onclick="App.navigate('schedule')"><span class="mi">程</span>协同日程</a>
+          <a class="menu-item" data-route="report" onclick="App.navigate('report')"><span class="mi">报</span>周报总结</a>
+        </div>
+
+        <div class="menu-group">
+          <div class="menu-title">分析</div>
+          <a class="menu-item" data-route="alerts" onclick="App.navigate('alerts')"><span class="mi">警</span>预警中心</a>
+          <a class="menu-item" data-route="funnel" onclick="App.navigate('funnel')"><span class="mi">漏</span>销售漏斗</a>
+          <a class="menu-item" data-route="performance" onclick="App.navigate('performance')"><span class="mi">绩</span>业绩管理</a>
+        </div>
+
+        <div class="menu-group" id="entMenuGroup">
+          <div class="menu-title">企业管理</div>
+          <a class="menu-item" data-route="enterprise-info" onclick="App.navigate('enterprise-info')"><span class="mi">司</span>企业信息</a>
+          <a class="menu-item" data-route="enterprise-org" onclick="App.navigate('enterprise-org')"><span class="mi">组</span>组织架构</a>
+          <a class="menu-item" data-route="enterprise-users" onclick="App.navigate('enterprise-users')"><span class="mi">员</span>用户管理</a>
+        </div>
+
+        <div class="menu-group">
+          <div class="menu-title">系统</div>
+          <a class="menu-item" data-route="settings" onclick="App.navigate('settings')"><span class="mi">设</span>系统设置</a>
+        </div>
+
+        <div class="sidebar-footer">
+          <button class="btn-reset" onclick="App.resetData()" title="恢复示例数据">↺ 重置示例数据</button>
+        </div>
+      </aside>
+
+      <main class="main" id="mainContent"></main>
+    </div>
+  </div>
+
+  <div id="toastWrap" class="toast-wrap"></div>
+  <div id="modalRoot"></div>
+
+  <script src="js/utils.js?v=20260723b"></script>
+  <script src="js/api.js?v=20260723b"></script>
+  <script src="js/store.js?v=20260723b"></script>
+  <script src="js/seed.js?v=20260723b"></script>
+  <script src="js/personal.js?v=20260723b"></script>
+  <script src="js/auth.js?v=20260723b"></script>
+  <script src="js/enterprise.js?v=20260723b"></script>
+  <script src="js/customer.js?v=20260723b"></script>
+  <script src="js/contact.js?v=20260723b"></script>
+  <script src="js/opportunity.js?v=20260723b"></script>
+  <script src="js/followup.js?v=20260723b"></script>
+  <script src="js/schedule.js?v=20260723b"></script>
+  <script src="js/expert-prompts.js?v=20260723b"></script>
+  <script src="js/online-methodologies.js?v=20260723b"></script>
+  <script src="js/ai.js?v=20260723b"></script>
+  <script src="js/experts.js?v=20260723b"></script>
+  <script src="js/dashboard.js?v=20260723b"></script>
+  <script src="js/report.js?v=20260723b"></script>
+  <script src="js/app.js?v=20260723b"></script>
+</body>
+</html>
