@@ -27,7 +27,3 @@ services:
         sync: false
       - key: DOUBAO_SEARCH_API_KEY
         sync: false
-      - key: WECHAT_APP_ID
-        sync: false
-      - key: WECHAT_APP_SECRET
-        sync: false
