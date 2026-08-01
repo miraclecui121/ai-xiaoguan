@@ -4,7 +4,7 @@
 
 - 项目名：AI销冠发布工程
 - 初始化日期：2026-07-23
-- 技术栈：Vite + Sites Worker 静态托管
+- 技术栈：Node.js 原生 HTTP 服务 + Render Web Service
 
 ## 工作约束
 
@@ -15,7 +15,7 @@
 
 ## 构建约定
 
-- 产品源码来自根目录 `index.html` 和 `public/css`、`public/js`。
-- 保留 `.openai/hosting.json`、`worker/index.js`、`scripts/prepare-sites-build.mjs`、`tests/sites-worker.test.mjs`，用于 Sites 发布。
-- 部署前运行 `npm run build` 和 `npm run test:sites`。
-- 当前是静态体验版，不在前端内置平台 API Key。
+- 产品源码来自根目录 `index.html`、`css/`、`js/`、`server.mjs` 和服务端 `skillhub-packages/*/SOUL.md`。
+- `.openai/`、`worker/`、`scripts/prepare-sites-build.mjs`、`tests/sites-worker.test.mjs` 仅作为历史 Sites 发布材料保留，不是当前主发布路径。
+- 部署前运行 `npm run build`，该命令执行 Node/前端脚本语法检查。
+- 当前云端由 `server.mjs` 托管前端静态资源、DeepSeek/豆包搜索代理、微信 OAuth callback；API Key 与 AppSecret 只放 Render 环境变量。

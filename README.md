@@ -1,6 +1,6 @@
 # AI销冠
 
-AI销冠个人版/体验版线上发布工程。
+AI销冠个人版/体验版线上发布工程。当前主发布路径为 Render Node Web Service，用于承载前端、平台模型代理、豆包搜索代理和微信 OAuth 回调。
 
 ## 本地运行
 
@@ -13,17 +13,67 @@ npm run dev
 
 ```bash
 npm run build
-npm run test:sites
 ```
 
 ## 部署说明
 
-当前版本是静态体验版，客户数据与模型配置保存在浏览器本地。正式产品版需要新增后端能力：
+当前版本是轻量 Node 服务，客户/商机等业务数据仍保存在浏览器本地；后端负责敏感能力：
 
-- 账号、邀请码、订阅状态持久化
-- 客户/联系人/商机数据云端存储
-- 平台托管 LLM API 代理
-- 企业自带 API Key 的隔离与审计
+- 微信 OAuth 授权开始、回调、会话 Cookie
+- 平台托管 DeepSeek API 代理
+- 豆包搜索代理
+- 服务端注入 10 个专家 SOUL
+- 审计日志与敏感路径拦截
+
+Render 必填环境变量：
+
+```text
+PUBLIC_BASE_URL=https://aisales.zhixingmap.com
+SESSION_SECRET=一段随机强密钥
+DEEPSEEK_API_KEY=DeepSeek平台Key
+DOUBAO_SEARCH_API_KEY=豆包搜索Key
+WECHAT_APP_ID=微信公众号或开放平台AppID
+WECHAT_APP_SECRET=对应AppSecret
+WECHAT_OAUTH_MODE=official
+WECHAT_OAUTH_SCOPE=snsapi_userinfo
+```
+
+微信后台需要把网页授权域名配置为：
+
+```text
+aisales.zhixingmap.com
+```
+
+回调地址由服务端生成：
+
+```text
+https://aisales.zhixingmap.com/api/auth/wechat/callback
+```
+
+### Render 切换要求
+
+旧服务是 Static Site，只能托管静态文件，无法处理 `/api/auth/wechat/callback`。真实微信 OAuth 必须满足以下任一条件：
+
+1. 在 Render 用本仓库新建 Web Service，配置：
+
+```text
+Repository: miraclecui121/ai-xiaoguan
+Branch: main
+Runtime: Node
+Build Command: npm install && npm run build
+Start Command: npm start
+```
+
+2. 或使用 `render.yaml` 作为 Blueprint 重新同步服务，让服务类型变成 `web + runtime: node`。
+
+线上验证命令：
+
+```bash
+curl https://ai-xiaoguan.onrender.com/api/auth/wechat/status
+curl https://aisales.zhixingmap.com/api/auth/wechat/status
+```
+
+能返回 JSON 才说明后端已上线；如果返回 `404 Not Found`，说明仍在旧 Static Site。
 
 ## 当前线上地址
 

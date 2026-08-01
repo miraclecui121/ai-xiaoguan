@@ -1,11 +1,32 @@
 services:
   - type: web
     name: ai-xiaoguan
-    runtime: static
+    runtime: node
     buildCommand: npm install && npm run build
-    staticPublishPath: ./dist/client
+    startCommand: npm start
     autoDeploy: true
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: PUBLIC_BASE_URL
+        value: https://aisales.zhixingmap.com
+      - key: DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com/v1
+      - key: DEEPSEEK_MODEL
+        value: deepseek-v4-flash
+      - key: DOUBAO_SEARCH_VERSION
+        value: global
+      - key: WECHAT_OAUTH_MODE
+        value: official
+      - key: WECHAT_OAUTH_SCOPE
+        value: snsapi_userinfo
+      - key: SESSION_SECRET
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DOUBAO_SEARCH_API_KEY
+        sync: false
+      - key: WECHAT_APP_ID
+        sync: false
+      - key: WECHAT_APP_SECRET
+        sync: false

@@ -280,9 +280,16 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 .ai-suggestions-body{display:flex;gap:7px;flex-wrap:wrap;animation:panelExpand .25s ease both}
 .ai-chip{padding:6px 12px;border-radius:16px;background:var(--primary-bg);color:var(--primary);font-size:12.5px;cursor:pointer;border:1px solid transparent}
 .ai-chip:hover{border-color:var(--primary)}
-.ai-input-bar{display:flex;gap:8px;padding:12px 14px;border-top:1px solid #dfe8e6;background:#fff}
-.ai-input-bar input{flex:1;height:40px;border:1px solid #cfdad8;border-radius:9px;padding:0 16px;background:#fff}
-.ai-input-bar input:focus{border-color:var(--primary-light)}
+.ai-input-bar{display:flex;align-items:flex-end;gap:8px;padding:12px 14px;border-top:1px solid #dfe8e6;background:#fff}
+.ai-input-bar textarea{flex:1;min-height:44px;max-height:128px;border:1px solid #cfdad8;border-radius:9px;padding:11px 16px;background:#fff;resize:none;line-height:20px;overflow:hidden}
+.ai-input-bar textarea:focus{border-color:var(--primary-light)}
+.ai-input-bar .btn{height:44px}
+.ai-search-toggle{
+  height:44px;padding:0 12px;border:1px solid #cfdad8;border-radius:9px;background:#fff;color:var(--text-2);
+  font-size:13px;font-weight:700;white-space:nowrap;
+}
+.ai-search-toggle.active{border-color:#0f766e;background:#e7f7f4;color:#0f766e}
+.ai-search-toggle:hover{border-color:var(--primary-light)}
 .ai-side{display:flex;flex-direction:column;gap:12px;overflow-y:auto}
 .ai-insight{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px}
 .ai-insight h4{font-size:13px;margin-bottom:8px;color:var(--primary);display:flex;align-items:center;gap:5px}
@@ -402,7 +409,7 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 
 /* ===== @提及与上下文选择系统 ===== */
 /* @提及按钮 */
-.ai-mention-btn{width:40px;height:40px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--primary);font-size:18px;font-weight:700;cursor:pointer;flex-shrink:0;transition:.2s;line-height:1}
+.ai-mention-btn{width:44px;height:44px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--primary);font-size:18px;font-weight:700;cursor:pointer;flex-shrink:0;transition:.2s;line-height:1}
 .ai-mention-btn:hover{background:var(--primary);color:#fff;border-color:var(--primary)}
 /* @提及快捷入口chip */
 .ai-chip-mention{background:linear-gradient(135deg,#fffbf0,#fff5e0);color:var(--gold);border-color:var(--gold-light,#e6c860)}
@@ -566,6 +573,22 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
   width:100%;border:0;background:transparent;text-align:left;cursor:pointer;padding:4px 0;border-radius:6px;
 }
 .login-demo-account:hover{background:#fff}
+.wechat-login-card{margin-bottom:16px}
+.wechat-login-btn{
+  width:100%;display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:10px;
+  background:linear-gradient(135deg,#0f766e,#0b4b46);color:#fff;text-align:left;box-shadow:0 10px 24px rgba(15,118,110,.16);
+}
+.wechat-login-btn:hover{filter:brightness(1.04)}
+.wechat-login-icon{
+  width:34px;height:34px;border-radius:10px;background:#e8fff7;color:#0f766e;
+  display:flex;align-items:center;justify-content:center;font-weight:800;flex-shrink:0;
+}
+.wechat-login-btn b{display:block;font-size:15px;margin-bottom:2px}
+.wechat-login-btn small{display:block;font-size:12px;color:rgba(255,255,255,.78);font-weight:400}
+.login-divider{display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:12px;margin:12px 0 14px}
+.login-divider:before,.login-divider:after{content:"";height:1px;background:var(--border);flex:1}
+.login-acq-hint{margin-top:8px;font-size:12px;color:var(--text-2);line-height:1.5}
+.login-acq-hint code{background:#fff;padding:2px 6px;border-radius:4px;border:1px solid var(--border)}
 
 /* ===== 企业管理 ===== */
 .org-tree{padding:4px 0}
@@ -833,11 +856,16 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 }
 .workspace-banner-demo{background:#fffaf0;border-color:#f5d28a}
 .workspace-banner-personal{background:#effaf3;border-color:#b8e2c4}
+.workspace-banner-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .workspace-banner-title{font-size:14px;font-weight:700;color:var(--text-1);margin-bottom:3px}
 .workspace-banner-desc{font-size:12px;color:var(--text-2);line-height:1.5}
 .activation-panel{display:flex;flex-direction:column;gap:12px}
 .activation-note,.import-note{
   background:var(--gray-bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px;
+}
+.activation-note-inline{
+  min-height:38px;display:flex;align-items:center;padding:9px 11px;border:1px dashed #99d6c7;border-radius:8px;
+  background:#f0fdfa;color:var(--primary);font-size:12px;line-height:1.5;
 }
 .activation-note-title,.import-note-title{font-size:14px;font-weight:700;color:var(--text-1);margin-bottom:4px}
 .activation-note-desc,.import-note-desc,.activation-footnote{font-size:12px;color:var(--text-2);line-height:1.6}
@@ -845,10 +873,25 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 .import-panel{display:flex;flex-direction:column;gap:12px}
 .import-textarea{min-height:160px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px}
 .import-preview{min-height:24px}
+.invite-admin-card .card-title{margin-bottom:10px}
+.invite-admin-note{
+  padding:10px 12px;margin-bottom:12px;border:1px solid #bfe9dc;border-radius:8px;
+  background:#eefaf6;color:var(--text-2);font-size:13px;line-height:1.7;
+}
+.invite-generator{
+  padding:12px;border:1px solid var(--border);border-radius:8px;background:#fbfcfd;margin-bottom:12px;
+}
+.invite-table td{vertical-align:top}
+.invite-table small{display:block;color:var(--text-3);font-size:11px;line-height:1.5;margin-top:2px}
+.invite-code{
+  background:#f8fafc;border:1px solid var(--border);border-radius:6px;padding:3px 6px;
+  font-size:12px;color:var(--primary);white-space:nowrap;
+}
 
 @media (max-width:768px){
   .crm-selector{grid-template-columns:repeat(2,1fr)}
   .crm-strategy-grid{grid-template-columns:1fr}
   .crm-info-row{flex-direction:column}
   .workspace-banner{align-items:flex-start;flex-direction:column}
+  .workspace-banner-actions{justify-content:flex-start}
 }

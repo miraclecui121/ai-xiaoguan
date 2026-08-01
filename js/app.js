@@ -24,6 +24,9 @@ const App = {
     // 异步初始化：检测 API 可用性 → 拉取数据或加载本地数据
     await Store.init();
     Store.initSession();
+    if(typeof Auth!=='undefined' && Auth.restoreWechatOAuthSession){
+      await Auth.restoreWechatOAuthSession();
+    }
     // 认证守卫：未登录则显示登录页
     if(!Auth.check()) return;
     App.navigate('dashboard');
@@ -50,6 +53,7 @@ const App = {
       return;
     }
     App.currentRoute = route;
+    if(typeof Audit!=='undefined') Audit.log('page_view', { action:'navigate', route });
     // 菜单高亮
     document.querySelectorAll('.menu-item').forEach(m=>{
       m.classList.toggle('active', m.dataset.route===route);
@@ -288,7 +292,7 @@ const App = {
     <div class="card">
       <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
         <span style="display:flex;align-items:center;gap:6px">
-          <span>AI 大模型配置</span>
+          <span>AI 大模型配置 <small style="font-weight:500;color:var(--text-3)">个人版默认走平台 DeepSeek V4-Flash；此处供企业自配模型验证</small></span>
           <span class="settings-collapse-toggle" onclick="App.toggleAiModelConfig()" id="aiModelToggle" title="点击收起/展开配置">${aiTxt}</span>
         </span>
         <div>
@@ -297,14 +301,19 @@ const App = {
         </div>
       </div>
       <div id="aiModelConfigBody" class="settings-collapse-body" style="${aiStyle}">
-      <div style="margin-bottom:12px;padding:8px 12px;background:#f0f7ff;border-radius:6px;font-size:13px;color:var(--text-2)">
-        💡 <b>系统默认模型</b>：DeepSeek V3（需配置API Key后生效）。支持接入 OpenAI、通义千问等兼容 OpenAI Chat Completions 接口的大模型。配置后 AI 助手将获得真实的对话能力。
+      <div style="margin-bottom:12px;padding:10px 12px;background:#eefaf6;border:1px solid #bfe9dc;border-radius:6px;font-size:13px;color:var(--text-2);line-height:1.7">
+        <b>个人版默认体验</b>：AI销冠平台已通过本机代理接入 DeepSeek V4-Flash，C 端用户无需填写 API Key，即可体验 10 个销售分析视角的真实对话。<br>
+        <b>B 端自配说明</b>：下方配置区用于证明企业客户可接入自己的 OpenAI Chat Completions 兼容模型。若企业填写并设为默认，将优先使用企业自配模型；未配置时自动回到平台模型。生产环境应由后端加密保存企业 Key，不应下发到浏览器。
+      </div>
+      <div style="margin-bottom:12px;padding:10px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;font-size:13px;color:var(--text-2);line-height:1.7">
+        <b>本机日志与隐私</b>：系统会记录登录、页面访问、AI专家调用、脱敏后的提问、耗时、Token和异常拦截，用于调试质量和识别爬取风险；不记录密码、API Key、Cookie、完整客户档案快照和完整模型回复。本机日志保存在服务端 <code>logs/</code> 目录，正式上线后应改为后端审计表并设置保留周期。
       </div>
       <div id="aiModelList" class="ai-model-list">
         ${(s.aiModels?.providers||[]).map((m,i)=>App.renderAiModelRow(m,i)).join('')}
       </div>
       </div>
     </div>
+    ${Store.isAdmin() ? App.renderInviteAdminCard() : ''}
     ${App.renderSubscriptionCard(subTxt, subStyle)}
     <div class="card">
       <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
@@ -335,6 +344,118 @@ const App = {
       });
     }
     Toast.show('设置已保存','success');
+  },
+
+  renderInviteAdminCard(){
+    const rows = Store.inviteUsageSummary ? Store.inviteUsageSummary() : [];
+    const origin = location.origin || 'http://127.0.0.1:4174';
+    const table = rows.length ? rows.map(({code, activations, aiCalls, searches, customers})=>{
+      const totalTokens = aiCalls.reduce((sum,e)=>sum+Number(e.tokens||0),0);
+      const names = activations.map(a=>a.userName).filter(Boolean).slice(0,3).join('、') || '—';
+      const link = `${origin}${location.pathname}?invite=${encodeURIComponent(code.code)}&src=${encodeURIComponent(code.sourceChannel||'')}&campaign=${encodeURIComponent(code.campaignName||'')}`;
+      const statusText = code.status==='active' ? '启用' : '停用';
+      const statusCls = code.status==='active' ? 'badge-green' : 'badge-gray';
+      return `
+        <tr>
+          <td><code class="invite-code">${Utils.esc(code.code)}</code></td>
+          <td>
+            <div>${Utils.esc(code.sourceChannel||'—')}</div>
+            <small>${Utils.esc(code.campaignName||'—')}</small>
+          </td>
+          <td>
+            <div>${Utils.esc(code.planName||'个人版')}</div>
+            <small>AI ${Number(code.aiCallQuota||0)||'不限'} 次 · 搜索 ${Number(code.searchQuota||0)||'不限'} 次 · 客户 ${Number(code.customerLimit||0)||'不限'}</small>
+          </td>
+          <td>${Number(code.usedCount||0)} / ${Number(code.maxUses||0)||'不限'}</td>
+          <td>
+            <div>${Utils.esc(names)}</div>
+            <small>${activations.length} 个用户 · ${customers.length} 个客户</small>
+          </td>
+          <td>${aiCalls.length} 次 <small>${totalTokens ? `· ${Utils.fmtMoneyPlain(totalTokens)} tokens` : ''}${searches?.length ? ` · 联网 ${searches.length} 次` : ''}</small></td>
+          <td><span class="badge ${statusCls}">${statusText}</span></td>
+          <td>
+            <button class="btn btn-ghost btn-xs" onclick="App.copyInviteLink('${Utils.esc(link)}')">复制链接</button>
+            <button class="btn btn-ghost btn-xs" onclick="App.toggleInviteCode('${Utils.esc(code.code)}')">${code.status==='active'?'停用':'启用'}</button>
+          </td>
+        </tr>`;
+    }).join('') : `<tr><td colspan="8" class="empty" style="padding:18px">暂无邀请码</td></tr>`;
+    return `
+    <div class="card invite-admin-card">
+      <div class="card-title">
+        <span>邀请码与体验追踪</span>
+        <span class="badge badge-green">个人版增长闭环</span>
+      </div>
+      <div class="invite-admin-note">
+        用邀请码控制“从演示空间进入个人空间”的开通权限。生成时写入渠道和活动名，用户激活后会追踪到该邀请码下的用户、客户数和 AI 专家调用次数。
+      </div>
+      <div class="invite-generator">
+        <div class="form-grid-4">
+          <div class="form-row"><label class="form-label">前缀</label><input class="form-input" id="invPrefix" value="AIXG"></div>
+          <div class="form-row"><label class="form-label">数量</label><input class="form-input" id="invCount" type="number" min="1" max="50" value="5"></div>
+          <div class="form-row"><label class="form-label">来源渠道</label><input class="form-input" id="invSource" value="社群内测"></div>
+          <div class="form-row"><label class="form-label">活动名</label><input class="form-input" id="invCampaign" value="首批体验"></div>
+        </div>
+        <div class="form-grid-4">
+          <div class="form-row"><label class="form-label">权益名称</label><input class="form-input" id="invPlanName" value="个人体验版"></div>
+          <div class="form-row"><label class="form-label">每码可用次数</label><input class="form-input" id="invMaxUses" type="number" min="1" value="1"></div>
+          <div class="form-row"><label class="form-label">AI 调用额度</label><input class="form-input" id="invAiQuota" type="number" min="0" value="100"></div>
+          <div class="form-row"><label class="form-label">联网检索额度</label><input class="form-input" id="invSearchQuota" type="number" min="0" value="30"></div>
+        </div>
+        <div class="form-grid-2">
+          <div class="form-row"><label class="form-label">客户容量</label><input class="form-input" id="invCustomerLimit" type="number" min="0" value="100"></div>
+          <div class="form-row"><label class="form-label">到期日期</label><input class="form-input" id="invExpiresAt" type="date" value="2026-12-31"></div>
+        </div>
+        <div class="form-row"><label class="form-label">备注</label><input class="form-input" id="invRemark" placeholder="如：直播间赠送、付费体验、老客户内测"></div>
+        <button class="btn btn-primary" onclick="App.generateInviteCodesFromForm()">生成邀请码</button>
+      </div>
+      <table class="data-table invite-table">
+        <thead><tr><th>邀请码</th><th>来源/活动</th><th>权益</th><th>使用</th><th>激活用户</th><th>AI调用</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody>${table}</tbody>
+      </table>
+    </div>`;
+  },
+
+  generateInviteCodesFromForm(){
+    try{
+      const codes = Store.generateInviteCodes({
+        prefix:document.getElementById('invPrefix')?.value || 'AIXG',
+        count:Math.min(50, Math.max(1, Number(document.getElementById('invCount')?.value || 1))),
+        type:'gift',
+        plan:'personal_trial',
+        planName:document.getElementById('invPlanName')?.value || '个人体验版',
+        sourceChannel:document.getElementById('invSource')?.value || '社群内测',
+        campaignName:document.getElementById('invCampaign')?.value || '体验活动',
+        maxUses:Number(document.getElementById('invMaxUses')?.value || 1),
+        aiCallQuota:Number(document.getElementById('invAiQuota')?.value || 0),
+        searchQuota:Number(document.getElementById('invSearchQuota')?.value || 0),
+        customerLimit:Number(document.getElementById('invCustomerLimit')?.value || 0),
+        expiresAt:document.getElementById('invExpiresAt')?.value || '',
+        remark:document.getElementById('invRemark')?.value || '',
+      });
+      if(typeof Audit!=='undefined') Audit.log('invite_codes_generated', { action:'generate_invite_codes', result:'success', count:codes.length });
+      App.render();
+      Toast.show(`已生成 ${codes.length} 个邀请码`, 'success');
+    }catch(e){
+      Toast.show(e.message || '邀请码生成失败', 'error');
+    }
+  },
+
+  copyInviteLink(link){
+    const text = String(link || '');
+    if(navigator.clipboard?.writeText){
+      navigator.clipboard.writeText(text).then(()=>Toast.show('邀请链接已复制','success')).catch(()=>Toast.show(text,'info'));
+    }else{
+      Toast.show(text, 'info');
+    }
+  },
+
+  toggleInviteCode(code){
+    const item = Store.findInviteCode(code);
+    if(!item) return Toast.show('邀请码不存在', 'error');
+    item.status = item.status==='active' ? 'disabled' : 'active';
+    Store.save();
+    if(typeof Audit!=='undefined') Audit.log('invite_code_status_changed', { action:'toggle_invite_code', code, status:item.status });
+    App.render();
   },
 
   // ===== CRM 系统对接 =====
@@ -1050,7 +1171,7 @@ const App = {
           <div class="form-row"><label class="form-label">API 接口地址</label><input class="form-input ai-model-field" data-id="${m.id}" data-field="baseUrl" value="${Utils.esc(m.baseUrl)}" placeholder="https://api.xxx.com/v1"></div>
           <div class="form-row"><label class="form-label">模型名称</label><input class="form-input ai-model-field" data-id="${m.id}" data-field="model" value="${Utils.esc(m.model)}" placeholder="如 deepseek-chat / gpt-4o"></div>
         </div>
-        <div class="form-row" style="margin-top:8px"><label class="form-label">API Key ${m.isDefault?'<small style="color:var(--orange)">（系统默认模型需要配置Key后生效）</small>':''}</label><input class="form-input ai-model-field" data-id="${m.id}" data-field="apiKey" type="password" value="${Utils.esc(m.apiKey)}" placeholder="输入 API Key..."></div>
+        <div class="form-row" style="margin-top:8px"><label class="form-label">API Key ${m.isDefault?'<small style="color:var(--orange)">（仅用于企业自配模型演示；个人版默认走平台代理）</small>':''}</label><input class="form-input ai-model-field" data-id="${m.id}" data-field="apiKey" type="password" value="${Utils.esc(m.apiKey)}" placeholder="输入企业自己的 API Key..."></div>
       </div>
     </div>`;
   },

@@ -8,6 +8,7 @@
 const Store = {
   KEY: 'aiwin_crm_db_v2',
   SESSION_KEY: 'aiwin_crm_session',
+  ACQ_KEY: 'aixg_acquisition',
   db: null,
   session: { enterpriseId: null, userId: null, loginAt: null },
   // 当前模式：'api' 或 'local'，由 init() 检测后设定
@@ -73,6 +74,7 @@ const Store = {
       Store.save();
       Store.migrateV1();
     }
+    Store.captureAcquisition();
     // 应用自定义数据字典配置（双模式统一）
     if(Store.db.settings && Store.db.settings.dict){
       DICT.applyCustom(Store.db.settings.dict);
@@ -80,7 +82,7 @@ const Store = {
     // 确保 aiModels 配置存在（兼容已有用户数据迁移）
     if(Store.db.settings && !Store.db.settings.aiModels){
       Store.db.settings.aiModels = { enabled:true, defaultId:'deepseek', providers:[
-        { id:'deepseek', name:'DeepSeek V3', provider:'deepseek', apiKey:'', baseUrl:'https://api.deepseek.com/v1', model:'deepseek-chat', enabled:true, isDefault:true },
+        { id:'deepseek', name:'企业自配 DeepSeek V4-Flash', provider:'deepseek', apiKey:'', baseUrl:'https://api.deepseek.com/v1', model:'deepseek-v4-flash', enabled:true, isDefault:true },
         { id:'qwen', name:'通义千问 Qwen-Max', provider:'qwen', apiKey:'', baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1', model:'qwen-max', enabled:false, isDefault:false },
         { id:'openai', name:'OpenAI GPT-4o', provider:'openai', apiKey:'', baseUrl:'https://api.openai.com/v1', model:'gpt-4o', enabled:false, isDefault:false }
       ]};
@@ -118,12 +120,49 @@ const Store = {
     });
     if(!Store.db.settings.inviteCodes){
       Store.db.settings.inviteCodes = [
-        { code:'WIN-DEMO-2026', type:'gift', plan:'personal_trial', planName:'个人体验版', maxUses:20, usedCount:0, aiCallQuota:200, customerLimit:100, expiresAt:'2026-12-31', status:'active', remark:'内测赠送码' },
-        { code:'WIN-STD-2026', type:'paid', plan:'personal_standard', planName:'个人标准版', maxUses:100, usedCount:0, aiCallQuota:1000, customerLimit:500, expiresAt:'2026-12-31', status:'active', remark:'标准开通码' },
-        { code:'CXN-INTERNAL', type:'internal', plan:'personal_unlimited', planName:'内部测试版', maxUses:999, usedCount:0, aiCallQuota:999999, customerLimit:99999, expiresAt:'2027-12-31', status:'active', remark:'内部测试' },
+        { code:'WIN-DEMO-2026', type:'gift', plan:'personal_trial', planName:'个人体验版', sourceChannel:'社群内测', campaignName:'默认演示', maxUses:20, usedCount:0, aiCallQuota:200, customerLimit:100, expiresAt:'2026-12-31', status:'active', remark:'内测赠送码', createdAt:Utils.now(), createdBy:'system' },
+        { code:'WIN-STD-2026', type:'paid', plan:'personal_standard', planName:'个人标准版', sourceChannel:'付费开通', campaignName:'标准版', maxUses:100, usedCount:0, aiCallQuota:1000, customerLimit:500, expiresAt:'2026-12-31', status:'active', remark:'标准开通码', createdAt:Utils.now(), createdBy:'system' },
+        { code:'CXN-INTERNAL', type:'internal', plan:'personal_unlimited', planName:'内部测试版', sourceChannel:'内部测试', campaignName:'内部', maxUses:999, usedCount:0, aiCallQuota:999999, customerLimit:99999, expiresAt:'2027-12-31', status:'active', remark:'内部测试', createdAt:Utils.now(), createdBy:'system' },
       ];
     }
+    Store.db.settings.inviteActivations = Store.db.settings.inviteActivations || [];
+    Store.db.settings.aiUsageEvents = Store.db.settings.aiUsageEvents || [];
+    Store.db.settings.searchUsageEvents = Store.db.settings.searchUsageEvents || [];
+    Store.db.settings.inviteCodes.forEach(c=>{
+      c.sourceChannel = c.sourceChannel || (c.type==='paid' ? '付费开通' : c.type==='internal' ? '内部测试' : '社群内测');
+      c.campaignName = c.campaignName || c.remark || '默认活动';
+      c.createdAt = c.createdAt || Utils.now();
+      c.createdBy = c.createdBy || 'system';
+      c.status = c.status || 'active';
+      if(c.searchQuota === undefined) c.searchQuota = c.type==='internal' ? 99999 : (c.type==='paid' ? 300 : 50);
+    });
+    const deepseek = Store.db.settings.aiModels?.providers?.find(p=>p.id==='deepseek');
+    if(deepseek && (deepseek.name==='DeepSeek V3' || deepseek.model==='deepseek-chat')){
+      deepseek.name = '企业自配 DeepSeek V4-Flash';
+      deepseek.model = 'deepseek-v4-flash';
+      deepseek.baseUrl = deepseek.baseUrl || 'https://api.deepseek.com/v1';
+    }
     Store.save();
+  },
+
+  captureAcquisition(){
+    try{
+      const params = new URLSearchParams(location.search || '');
+      const acq = {
+        sourceChannel: params.get('src') || params.get('source') || params.get('channel') || '',
+        campaignName: params.get('campaign') || params.get('campaign_id') || '',
+        inviteCode: (params.get('invite') || params.get('code') || '').toUpperCase(),
+        expertEntry: params.get('expert') || '',
+        landingPath: location.pathname + location.search,
+        capturedAt: Utils.now(),
+      };
+      if(acq.sourceChannel || acq.campaignName || acq.inviteCode || acq.expertEntry){
+        localStorage.setItem(Store.ACQ_KEY, JSON.stringify(acq));
+      }
+    }catch(e){}
+  },
+  getAcquisition(){
+    try{ return JSON.parse(localStorage.getItem(Store.ACQ_KEY) || '{}'); }catch(e){ return {}; }
   },
 
   applyBrandMigration(){
@@ -277,6 +316,10 @@ const Store = {
     Store.ensureWorkspaceDefaults();
     return Store.db.settings.inviteCodes || [];
   },
+  inviteActivations(){
+    Store.ensureWorkspaceDefaults();
+    return Store.db.settings.inviteActivations || [];
+  },
   findInviteCode(code){
     const normalized = String(code||'').trim().toUpperCase();
     return Store.inviteCodes().find(c=>String(c.code).toUpperCase()===normalized) || null;
@@ -289,7 +332,46 @@ const Store = {
     if(Number(item.maxUses||0)>0 && Number(item.usedCount||0)>=Number(item.maxUses||0)) return { ok:false, message:'邀请码使用次数已用完' };
     return { ok:true, item };
   },
-  activatePersonalWorkspace({ code, name, account, password, phone }){
+  generateInviteCodes({ prefix='AIXG', count=1, type='gift', plan='personal_trial', planName='个人体验版', sourceChannel='社群内测', campaignName='体验活动', maxUses=1, aiCallQuota=100, searchQuota=30, customerLimit=100, expiresAt='', remark='' }={}){
+    Store.ensureWorkspaceDefaults();
+    const codes = [];
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const makeOne = ()=>{
+      let body = '';
+      for(let i=0;i<8;i++) body += alphabet[Math.floor(Math.random()*alphabet.length)];
+      return `${String(prefix||'AIXG').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,8)||'AIXG'}-${body.slice(0,4)}-${body.slice(4)}`;
+    };
+    for(let i=0;i<Number(count||1);i++){
+      let code = makeOne();
+      while(Store.findInviteCode(code)) code = makeOne();
+      const item = {
+        code, type, plan, planName, sourceChannel, campaignName,
+        maxUses:Number(maxUses||1), usedCount:0,
+        aiCallQuota:Number(aiCallQuota||0), searchQuota:Number(searchQuota||0), customerLimit:Number(customerLimit||0),
+        expiresAt, status:'active', remark,
+        createdAt:Utils.now(), createdBy:Store.currentUser()?.name || 'local-admin',
+      };
+      Store.db.settings.inviteCodes.push(item);
+      codes.push(item);
+    }
+    Store.save();
+    return codes;
+  },
+  inviteUsageSummary(){
+    const activations = Store.inviteActivations();
+    const usageEvents = Store.db.settings.aiUsageEvents || [];
+    const searchEvents = Store.db.settings.searchUsageEvents || [];
+    return Store.inviteCodes().map(code=>{
+      const acts = activations.filter(a=>a.code===code.code);
+      const userIds = new Set(acts.map(a=>a.userId));
+      const enterpriseIds = new Set(acts.map(a=>a.enterpriseId));
+      const aiCalls = usageEvents.filter(e=>userIds.has(e.userId) || enterpriseIds.has(e.enterpriseId));
+      const searches = searchEvents.filter(e=>userIds.has(e.userId) || enterpriseIds.has(e.enterpriseId));
+      const customers = Store.collection('customers').filter(c=>enterpriseIds.has(c.enterpriseId));
+      return { code, activations:acts, aiCalls, searches, customers };
+    });
+  },
+  activatePersonalWorkspace({ code, name, account, password, phone, sourceChannel, campaignName }){
     if(Store.mode==='api') throw new Error('云端模式请调用后端邀请码接口开通');
     const check = Store.validateInviteCode(code);
     if(!check.ok) throw new Error(check.message);
@@ -302,6 +384,7 @@ const Store = {
     if(!password || password.length<4) throw new Error('登录密码至少4位');
 
     const invite = check.item;
+    const acq = Store.getAcquisition();
     const entId = Utils.uid('per');
     const orgId = Utils.uid('org');
     const userId = Utils.uid('usr');
@@ -324,8 +407,12 @@ const Store = {
       maxUsers: 1,
       expireDate: expiresAt,
       inviteCode: invite.code,
+      sourceChannel: sourceChannel || invite.sourceChannel || acq.sourceChannel || '',
+      campaignName: campaignName || invite.campaignName || acq.campaignName || '',
       aiCallQuota: Number(invite.aiCallQuota||0),
       aiCallUsed: 0,
+      searchQuota: Number(invite.searchQuota||0),
+      searchUsed: 0,
       customerLimit: Number(invite.customerLimit||0),
       remark: `邀请码开通：${invite.type || 'gift'}`
     });
@@ -351,14 +438,244 @@ const Store = {
       title: '个人用户',
       status: 'active',
       avatar: name.charAt(0),
+      identityProvider: Store.currentUser()?.identityProvider || 'account',
+      externalId: Store.currentUser()?.externalId || '',
+      inviteCode: invite.code,
+      sourceChannel: sourceChannel || invite.sourceChannel || acq.sourceChannel || '',
+      campaignName: campaignName || invite.campaignName || acq.campaignName || '',
       lastLoginAt: Utils.now(),
     });
     invite.usedCount = Number(invite.usedCount||0) + 1;
     invite.lastUsedAt = Utils.now();
+    invite.lastUsedBy = name;
+    Store.db.settings.inviteActivations.push({
+      id:Utils.uid('act'),
+      code:invite.code,
+      type:invite.type || '',
+      plan:invite.plan || '',
+      planName,
+      sourceChannel:sourceChannel || invite.sourceChannel || acq.sourceChannel || '',
+      campaignName:campaignName || invite.campaignName || acq.campaignName || '',
+      enterpriseId:entId,
+      userId,
+      userName:name,
+      account,
+      phone,
+      activatedAt:Utils.now(),
+    });
     Store.session = { enterpriseId: entId, userId, loginAt: Utils.now() };
     Store.saveSession();
     Store.save();
     return { enterprise: Store.enterprise(entId), user: Store.user(userId), invite };
+  },
+
+  loginWithWechatDemo(){
+    if(Store.mode==='api') throw new Error('云端模式请接入微信OAuth后端接口');
+    Store.ensureWorkspaceDefaults();
+    const acq = Store.getAcquisition();
+    let externalId = localStorage.getItem('aixg_mock_wechat_openid');
+      if(!externalId){
+      externalId = 'mock_openid_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+      localStorage.setItem('aixg_mock_wechat_openid', externalId);
+    }
+    let user = Store.collection('users').find(u=>u.identityProvider==='wechat_mock' && u.externalId===externalId && u.enterpriseId==='ent_001');
+    if(!user){
+      user = Store.insert('users', {
+        id:Utils.uid('usr'),
+        enterpriseId:'ent_001',
+        name:'微信体验用户',
+        account:'wx_'+externalId.slice(-8),
+        password:'',
+        phone:'',
+        email:'',
+        role:'sales',
+        orgUnitId:'org_002',
+        title:'社群体验用户',
+        status:'active',
+        avatar:'微',
+        identityProvider:'wechat_mock',
+        externalId,
+        sourceChannel:acq.sourceChannel || '社群体验',
+        campaignName:acq.campaignName || '',
+        inviteCode:acq.inviteCode || '',
+        aiCallQuota:20,
+        aiCallUsed:0,
+        searchQuota:5,
+        searchUsed:0,
+        lastLoginAt:Utils.now(),
+        createdAt:Utils.now(),
+      });
+    }else{
+      Store.update('users', user.id, { lastLoginAt:Utils.now(), sourceChannel:user.sourceChannel || acq.sourceChannel || '社群体验', campaignName:user.campaignName || acq.campaignName || '' });
+    }
+    Store.session = { enterpriseId:'ent_001', userId:user.id, loginAt:Utils.now(), authProvider:'wechat_mock' };
+    Store.saveSession();
+    Store.save();
+    return Store.user(user.id);
+  },
+
+  loginWithWechatOAuth(profile={}){
+    Store.ensureWorkspaceDefaults();
+    const acq = Store.getAcquisition();
+    const externalId = String(profile.externalId || profile.unionidHash || profile.openidHash || '').trim();
+    if(!externalId) throw new Error('微信授权信息缺少用户标识');
+    const sourceChannel = profile.sourceChannel || acq.sourceChannel || '微信授权';
+    const campaignName = profile.campaignName || acq.campaignName || '';
+    const inviteCode = profile.inviteCode || acq.inviteCode || '';
+    let user = Store.collection('users').find(u=>
+      u.identityProvider==='wechat_oauth' &&
+      u.externalId===externalId &&
+      u.enterpriseId==='ent_001'
+    );
+    if(!user){
+      const name = String(profile.nickname || '微信用户').trim().slice(0,30) || '微信用户';
+      user = Store.insert('users', {
+        id:Utils.uid('usr'),
+        enterpriseId:'ent_001',
+        name,
+        account:'wx_'+externalId.replace(/[^A-Za-z0-9]/g,'').slice(-10),
+        password:'',
+        phone:'',
+        email:'',
+        role:'sales',
+        orgUnitId:'org_002',
+        title:'微信体验用户',
+        status:'active',
+        avatar:'微',
+        identityProvider:'wechat_oauth',
+        externalId,
+        sourceChannel,
+        campaignName,
+        inviteCode,
+        aiCallQuota:20,
+        aiCallUsed:0,
+        searchQuota:5,
+        searchUsed:0,
+        lastLoginAt:Utils.now(),
+        createdAt:Utils.now(),
+      });
+    }else{
+      Store.update('users', user.id, {
+        name:String(profile.nickname || user.name || '微信用户').trim().slice(0,30) || user.name,
+        lastLoginAt:Utils.now(),
+        sourceChannel:user.sourceChannel || sourceChannel,
+        campaignName:user.campaignName || campaignName,
+        inviteCode:user.inviteCode || inviteCode,
+      });
+    }
+    Store.session = { enterpriseId:'ent_001', userId:user.id, loginAt:Utils.now(), authProvider:'wechat_oauth' };
+    Store.saveSession();
+    Store.save();
+    return Store.user(user.id);
+  },
+
+  switchToDemoWorkspace(){
+    const user = Store.currentUser();
+    let target = Store.collection('users').find(u=>u.enterpriseId==='ent_001' && u.identityProvider===user?.identityProvider && u.externalId && u.externalId===user.externalId);
+    if(!target) target = Store.collection('users').find(u=>u.enterpriseId==='ent_001' && u.account==='sales1');
+    Store.session = { enterpriseId:'ent_001', userId:target.id, loginAt:Utils.now(), authProvider:target.identityProvider || 'account' };
+    Store.saveSession();
+    return target;
+  },
+
+  checkAiQuota(){
+    const user = Store.currentUser();
+    const ent = Store.currentEnterprise();
+    if(!user || !ent) return { ok:true };
+    if(ent.workspaceType==='personal'){
+      const quota = Number(ent.aiCallQuota || 0);
+      const used = Number(ent.aiCallUsed || 0);
+      if(quota > 0 && used >= quota){
+        return { ok:false, message:'当前个人空间 AI 调用额度已用完，请联系发放邀请码的人升级额度。' };
+      }
+    }
+    if(ent.workspaceType==='demo' && user.identityProvider==='wechat_mock'){
+      const quota = Number(user.aiCallQuota || 0);
+      const used = Number(user.aiCallUsed || 0);
+      if(quota > 0 && used >= quota){
+        return { ok:false, message:'演示体验 AI 调用额度已用完。使用邀请码开通个人空间后，可继续导入客户并调用 AI 销售分析。' };
+      }
+    }
+    return { ok:true };
+  },
+
+  checkSearchQuota(){
+    const user = Store.currentUser();
+    const ent = Store.currentEnterprise();
+    if(!user || !ent) return { ok:true };
+    if(ent.workspaceType==='personal'){
+      const quota = Number(ent.searchQuota || 0);
+      const used = Number(ent.searchUsed || 0);
+      if(quota > 0 && used >= quota){
+        return { ok:false, message:'当前个人空间联网检索额度已用完，请联系发放邀请码的人升级额度。' };
+      }
+    }
+    if(ent.workspaceType==='demo' && user.identityProvider==='wechat_mock'){
+      const quota = Number(user.searchQuota || 0);
+      const used = Number(user.searchUsed || 0);
+      if(quota > 0 && used >= quota){
+        return { ok:false, message:'演示体验联网检索额度已用完。使用邀请码开通个人空间后，可继续使用客户外部情报检索。' };
+      }
+    }
+    return { ok:true };
+  },
+
+  recordAiUsage({ model='', scope='', expertId='', usage=null }={}){
+    if(!Store.db?.settings) return;
+    const user = Store.currentUser();
+    const ent = Store.currentEnterprise();
+    const totalTokens = Number(usage?.total_tokens || 0);
+    Store.db.settings.aiUsageEvents = Store.db.settings.aiUsageEvents || [];
+    Store.db.settings.aiUsageEvents.push({
+      id:Utils.uid('use'),
+      at:Utils.now(),
+      userId:user?.id || '',
+      userName:user?.name || '',
+      enterpriseId:ent?.id || '',
+      workspaceType:ent?.workspaceType || '',
+      inviteCode:ent?.inviteCode || user?.inviteCode || '',
+      sourceChannel:ent?.sourceChannel || user?.sourceChannel || '',
+      campaignName:ent?.campaignName || user?.campaignName || '',
+      model, scope, expertId,
+      tokens:totalTokens,
+    });
+    if(ent && ent.workspaceType==='personal'){
+      ent.aiCallUsed = Number(ent.aiCallUsed||0) + 1;
+    }
+    if(ent && ent.workspaceType==='demo' && user?.identityProvider==='wechat_mock'){
+      user.aiCallUsed = Number(user.aiCallUsed||0) + 1;
+    }
+    Store.save();
+  },
+
+  recordSearchUsage({ model='', expertId='', usage=null, sources=[] }={}){
+    if(!Store.db?.settings) return;
+    const user = Store.currentUser();
+    const ent = Store.currentEnterprise();
+    Store.db.settings.searchUsageEvents = Store.db.settings.searchUsageEvents || [];
+    Store.db.settings.searchUsageEvents.push({
+      id:Utils.uid('srch'),
+      at:Utils.now(),
+      userId:user?.id || '',
+      userName:user?.name || '',
+      enterpriseId:ent?.id || '',
+      workspaceType:ent?.workspaceType || '',
+      inviteCode:ent?.inviteCode || user?.inviteCode || '',
+      sourceChannel:ent?.sourceChannel || user?.sourceChannel || '',
+      campaignName:ent?.campaignName || user?.campaignName || '',
+      model, expertId,
+      tokens:Number(usage?.total_tokens || 0),
+      webSearch:Number(usage?.web_search || usage?.search_count || 1),
+      resultCount:Number(usage?.result_count || (sources||[]).length || 0),
+      sourceDomains:(sources||[]).map(s=>s.site || '').filter(Boolean).slice(0,8),
+    });
+    if(ent && ent.workspaceType==='personal'){
+      ent.searchUsed = Number(ent.searchUsed||0) + 1;
+    }
+    if(ent && ent.workspaceType==='demo' && user?.identityProvider==='wechat_mock'){
+      user.searchUsed = Number(user.searchUsed||0) + 1;
+    }
+    Store.save();
   },
 
   // ===== 企业 =====

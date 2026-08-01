@@ -1,16 +1,12 @@
 {
   "name": "ai-xiaoguan-site",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build && node scripts/prepare-sites-build.mjs",
-    "preview": "vite preview",
-    "test:sites": "node --test tests/sites-worker.test.mjs"
-  },
-  "dependencies": {
-    "vite": "6.4.2"
-  },
-  "devDependencies": {}
+    "start": "node server.mjs",
+    "dev": "node server.mjs",
+    "check": "node --check server.mjs && node --check js/auth.js && node --check js/store.js && node --check js/app.js && node --check js/ai.js",
+    "build": "npm run check"
+  }
 }

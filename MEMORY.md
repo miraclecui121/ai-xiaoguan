@@ -17,3 +17,6 @@
 - 2026-07-23：GitHub 仓库已创建并推送到 `https://github.com/miraclecui121/ai-xiaoguan`；本机使用仓库级 SSH deploy key 推送，私钥位置为 `~/.ssh/agent/ai-xiaoguan_deploy_key`，只记录位置不记录值。
 - 2026-07-23：Render Static Site 已创建成功，服务名 `ai-xiaoguan`，服务 ID `srv-d9gspkjtqb8s73e4v4mg`，线上临时地址 `https://ai-xiaoguan.onrender.com` 返回 HTTP 200，页面标题为 `AI销冠`。
 - 2026-07-23：Render 已添加自定义域名 `aisales.zhixingmap.com`，当前等待 DNS；需要在 DNS 面板把 `aisales` 的 CNAME 从 `custom-domains.chatgpt.site.` 替换为 `ai-xiaoguan.onrender.com.`。DNS 由用户自行配置。
+- 2026-08-01：发布工程从 Render Static Site 转为 Node Web Service。`server.mjs` 托管前端、DeepSeek 平台代理、豆包搜索代理、微信 OAuth 路由和 SOUL 服务端注入；旧 `public/` 静态目录从 Git 移除，前端不再发布 `expert-prompts.js`。
+- 2026-08-01：微信真实登录采用公众号网页授权优先方案：`/api/auth/wechat/start` 生成微信授权 URL，`/api/auth/wechat/callback` 用 code 换网页授权 access_token/userinfo，签名 HttpOnly Cookie 保存会话，前端启动时通过 `/api/auth/wechat/session` 恢复到演示空间。微信 AppSecret、DeepSeek Key、豆包搜索 Key、SESSION_SECRET 均只放 Render 环境变量。
+- 2026-08-01：本地验证发布包：`npm run build` 通过；`/api/auth/wechat/status` 返回 JSON；`/public/js/expert-prompts.js`、`/js/expert-prompts.js`、`/.openai/hosting.json`、`/skillhub-packages/.../SOUL.md`、`/server.mjs` 均返回 404。

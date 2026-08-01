@@ -63,6 +63,10 @@ const Auth = {
     if(!isApi){
       Auth.normalizeLoginEnterprises();
     }
+    const acq = Store.getAcquisition ? Store.getAcquisition() : {};
+    const inviteHint = acq.inviteCode
+      ? `<div class="login-acq-hint">已识别邀请码：<code>${Utils.esc(acq.inviteCode)}</code>${acq.sourceChannel ? ` · 来源：${Utils.esc(acq.sourceChannel)}` : ''}</div>`
+      : '';
     box.innerHTML = `
       <div class="login-brand">
         <span class="logo-icon">冠</span>
@@ -75,6 +79,14 @@ const Auth = {
       </div>
 
       <div id="loginFormPanel">
+        <div class="wechat-login-card">
+          <button class="wechat-login-btn" onclick="Auth.loginWithWechat()" type="button">
+            <span class="wechat-login-icon">微</span>
+            <span><b>微信授权登录</b><small>${Auth.wechatLoginHint()}</small></span>
+          </button>
+          ${inviteHint}
+        </div>
+        <div class="login-divider"><span>账号登录备用</span></div>
         <div class="login-field">
           <label class="login-label">选择企业</label>
           <select class="login-input" id="loginEntId">
@@ -192,6 +204,89 @@ const Auth = {
     if(err) err.style.display = 'none';
   },
 
+  wechatLoginHint(){
+    return Auth.isLocalHost() ? '本机未配置时自动使用模拟授权' : '通过微信完成身份授权，进入演示空间';
+  },
+
+  isLocalHost(){
+    return ['localhost','127.0.0.1','::1'].includes(location.hostname) || location.protocol === 'file:';
+  },
+
+  async restoreWechatOAuthSession(){
+    if(location.search.includes('wechat_error=')){
+      const params = new URLSearchParams(location.search);
+      const err = params.get('wechat_error') || 'unknown';
+      setTimeout(()=>Toast.show(`微信授权失败：${err}`, 'error'), 300);
+      history.replaceState(null, '', location.pathname || '/');
+      return false;
+    }
+    try{
+      const resp = await fetch('/api/auth/wechat/session', { credentials:'include' });
+      if(!resp.ok) return false;
+      const data = await resp.json().catch(()=>null);
+      const profile = data?.data?.user;
+      if(!data?.data?.authenticated || !profile) return false;
+      const user = Store.loginWithWechatOAuth(profile);
+      if(typeof Audit!=='undefined') Audit.log('wechat_oauth_session_restored', { action:'wechat_oauth_session', result:'success' });
+      return !!user;
+    }catch(e){
+      return false;
+    }
+  },
+
+  async loginWithWechat(){
+    const errEl = document.getElementById('loginError');
+    if(errEl) errEl.style.display = 'none';
+    try{
+      const resp = await fetch('/api/auth/wechat/status', { credentials:'include' });
+      const data = await resp.json().catch(()=>null);
+      if(data?.data?.configured){
+        const acq = Store.getAcquisition ? Store.getAcquisition() : {};
+        const returnTo = `${location.pathname || '/'}${location.search || ''}`.replace(/[?&]wechat_error=[^&]+/,'');
+        const qs = new URLSearchParams();
+        if(acq.inviteCode) qs.set('invite', acq.inviteCode);
+        if(acq.sourceChannel) qs.set('src', acq.sourceChannel);
+        if(acq.campaignName) qs.set('campaign', acq.campaignName);
+        qs.set('return_to', returnTo || '/');
+        location.href = `/api/auth/wechat/start?${qs.toString()}`;
+        return;
+      }
+      if(Auth.isLocalHost()){
+        return Auth.loginWithWechatDemo();
+      }
+      throw new Error('云端微信 OAuth 尚未配置，请先在 Render 设置 WECHAT_APP_ID 和 WECHAT_APP_SECRET');
+    }catch(e){
+      if(Auth.isLocalHost()) return Auth.loginWithWechatDemo();
+      if(typeof Audit!=='undefined') Audit.log('wechat_oauth_login_failed', { action:'wechat_oauth_login', result:'error', message:e.message || '登录失败' });
+      if(errEl){
+        errEl.textContent = e.message || '微信授权登录失败';
+        errEl.style.display = 'block';
+      }else{
+        Toast.show(e.message || '微信授权登录失败', 'error');
+      }
+    }
+  },
+
+  loginWithWechatDemo(){
+    const errEl = document.getElementById('loginError');
+    if(errEl) errEl.style.display = 'none';
+    try{
+      const user = Store.loginWithWechatDemo();
+      if(typeof Audit!=='undefined') Audit.log('wechat_demo_login_success', { action:'wechat_demo_login', result:'success' });
+      Auth.showApp();
+      App.navigate('ai');
+      Toast.show(`已进入演示空间，${user.name}`, 'success');
+    }catch(e){
+      if(typeof Audit!=='undefined') Audit.log('wechat_demo_login_failed', { action:'wechat_demo_login', result:'error', message:e.message || '登录失败' });
+      if(errEl){
+        errEl.textContent = e.message || '微信授权登录失败';
+        errEl.style.display = 'block';
+      }else{
+        Toast.show(e.message || '微信授权登录失败', 'error');
+      }
+    }
+  },
+
   // API 模式下异步加载企业列表
   async loadEnterpriseOptions(){
     try{
@@ -239,6 +334,7 @@ const Auth = {
     try{
       const user = await Store.login(account, password, entId);
       if(!user){
+        if(typeof Audit!=='undefined') Audit.log('login_failed', { action:'login', result:'invalid_credentials', user:{ account, enterpriseId:entId } });
         errEl.textContent='账号或密码错误，或账号已被禁用';
         errEl.style.display='block';
         btn.textContent = oldText;
@@ -246,10 +342,12 @@ const Auth = {
         return;
       }
 
+      if(typeof Audit!=='undefined') Audit.log('login_success', { action:'login', result:'success' });
       Auth.showApp();
       App.navigate('dashboard');
       Toast.show(`欢迎回来，${user.name}！`, 'success');
     }catch(e){
+      if(typeof Audit!=='undefined') Audit.log('login_failed', { action:'login', result:'error', message:e.message || '登录失败', user:{ account, enterpriseId:entId } });
       errEl.textContent = e.message || '登录失败，请重试';
       errEl.style.display='block';
       btn.textContent = oldText;
@@ -374,10 +472,25 @@ const Auth = {
 
   // 退出
   logout(){
-    Modal.confirm('确认退出', '确定要退出当前账号吗？', ()=>{
+    const ent = Store.currentEnterprise ? Store.currentEnterprise() : null;
+    const user = Store.currentUser ? Store.currentUser() : null;
+    const isDemoExperience = ent?.workspaceType === 'demo' && ['wechat_mock','wechat_oauth'].includes(user?.identityProvider);
+    const isPersonal = ent?.workspaceType === 'personal';
+    const msg = isDemoExperience
+      ? '当前是演示体验空间，本次对话只用于临时体验，退出后不作为你的个人工作记录长期保留。<br><br>通过邀请码开通个人版后，你导入的客户数据和 AI 对话草稿会保留，下次登录可以继续接着问。'
+      : (isPersonal
+        ? '确定要退出当前账号吗？你的个人版客户数据和 AI 对话草稿会保留，下次登录可以继续使用。'
+        : '确定要退出当前账号吗？');
+    Modal.confirm(isDemoExperience ? '退出演示体验' : '确认退出', msg, ()=>{
+      if(isPersonal && typeof AI!=='undefined' && AI.saveConversation) AI.saveConversation();
+      if(typeof Audit!=='undefined') Audit.log('logout', { action:'logout', result:'confirmed' });
+      if(Store.session?.authProvider==='wechat_oauth'){
+        fetch('/api/auth/wechat/logout', { method:'POST', credentials:'include' }).catch(()=>{});
+      }
       Store.logout();
+      if(typeof AI!=='undefined' && AI.clearRuntimeState) AI.clearRuntimeState();
       if(App.resetCollapsedStates) App.resetCollapsedStates();
       Auth.showLogin();
-    }, '确认退出');
+    }, isDemoExperience ? '我知道了，退出' : '确认退出');
   },
 };
