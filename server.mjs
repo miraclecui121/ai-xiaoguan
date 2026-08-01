@@ -23,6 +23,7 @@ loadEnvFile(ENV_PATH);
 
 const config = {
   port: Number(process.env.PORT || 4174),
+  host: process.env.HOST || "0.0.0.0",
   apiKey: process.env.DEEPSEEK_API_KEY || "",
   baseUrl: (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/v1").replace(/\/$/, ""),
   model: process.env.DEEPSEEK_MODEL || "deepseek-v4-flash",
@@ -148,10 +149,11 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(config.port, "127.0.0.1", () => {
+server.listen(config.port, config.host, () => {
   const state = config.apiKey ? "configured" : "missing DEEPSEEK_API_KEY";
   const searchState = config.doubaoSearchApiKey ? "configured" : "missing DOUBAO_SEARCH_API_KEY";
-  console.log(`AI销冠本地服务已启动: http://127.0.0.1:${config.port}/`);
+  const displayHost = config.host === "0.0.0.0" ? "127.0.0.1" : config.host;
+  console.log(`AI销冠服务已启动: http://${displayHost}:${config.port}/`);
   console.log(`Platform LLM: DeepSeek ${config.model} (${state})`);
   console.log(`Platform Search: Doubao Search ${config.doubaoSearchVersion} (${searchState})`);
   console.log(`Wechat OAuth: ${config.wechatOAuthMode} (${isWechatConfigured() ? "configured" : "missing WECHAT_APP_ID/WECHAT_APP_SECRET"})`);
