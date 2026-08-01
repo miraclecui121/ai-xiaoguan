@@ -951,7 +951,13 @@ function isAllowedOrigin(req) {
   if (!origin) return true;
   try {
     const u = new URL(origin);
-    return ["localhost", "127.0.0.1", "::1"].includes(u.hostname);
+    if (["localhost", "127.0.0.1", "::1"].includes(u.hostname)) return true;
+
+    const allowedHosts = new Set();
+    const requestHost = String(req.headers["x-forwarded-host"] || req.headers.host || "").toLowerCase();
+    if (requestHost) allowedHosts.add(requestHost);
+    if (config.publicBaseUrl) allowedHosts.add(new URL(config.publicBaseUrl).host.toLowerCase());
+    return allowedHosts.has(u.host.toLowerCase());
   } catch {
     return false;
   }
