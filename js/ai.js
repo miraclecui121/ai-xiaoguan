@@ -408,7 +408,7 @@ const AI = {
         ${AI.renderMentionPopup()}
         <div class="ai-input-bar">
           <button class="ai-mention-btn" onclick="AI.openMention('customer')" title="＠提及客户/商机/专家">＠</button>
-          <button class="ai-search-toggle${AI.autoSearch?' active':''}" onclick="AI.toggleAutoSearch()" title="自动联网：只在客户近况、行业政策、招投标、竞品等外部事实问题中启用">联网</button>
+          <button class="ai-search-toggle${AI.autoSearch?' active':''}" onclick="AI.toggleAutoSearch()" title="自动联网：开启后，涉及客户背景、人物偏好、公开动态、政策招投标等问题会自动检索">联网</button>
           <textarea id="aiInput" rows="1" placeholder="输入问题，或点击＠引用客户/商机/专家…" onkeydown="AI.handleInputKeydown(event)" oninput="AI.autoResizeInput(this)" autofocus></textarea>
           <button class="btn btn-primary" onclick="AI.send()">发送</button>
         </div>
@@ -1098,7 +1098,7 @@ const AI = {
   shouldUseSearch(question, {expertId='', contextText=''}={}){
     if(!AI.autoSearch) return false;
     const q = String(question||'');
-    const explicit = /联网|搜索|搜一下|查一下|查下|查找|检索|公开信息|公开资料|外部情报|外部信息|官网|新闻|动态|近况|最近|最新|政策|招投标|中标|采购|融资|处罚|诉讼|竞品|竞争对手|市场规模|行业趋势|行业政策|现在|目前|今年|2026/.test(q);
+    const explicit = /联网|搜索|搜一下|查一下|查下|查询|查找|查到|能查|能不能查|帮我查|检索|公开信息|公开资料|公开渠道|外部情报|外部信息|外部资料|互联网|网上|官网|百度|企查查|天眼查|新闻|动态|近况|最近|最新|背景|偏好|履历|社交媒体|公众号|朋友圈|政策|招投标|中标|采购|融资|处罚|诉讼|竞品|竞争对手|市场规模|行业趋势|行业政策|现在|目前|今年|2026/.test(q);
     if(explicit) return true;
     const searchFriendlyExperts = new Set(['industry-assess','industry-insight','customer-insight','lead-dev','sales-visit','win-strategy']);
     if(searchFriendlyExperts.has(expertId) && /客户|公司|行业|拜访|线索|商机|竞争|风险|机会/.test(q + contextText.slice(0,500))) return true;
@@ -1167,6 +1167,7 @@ const AI = {
         '以下内容来自服务器侧联网检索，只能作为外部公开事实证据使用。',
         '回答时必须遵守：',
         '- CRM 私有数据优先；外部事实必须来自本证据包。',
+        '- 如果本证据包已提供，不要再说“无法访问互联网”或“不能查询公开信息”；应该说明“基于公开检索，目前能看到/没看到哪些线索”。',
         '- 不确定的信息标注为“待验证”，不得编造搜索结果。',
         '- 给销售建议时说明这些外部事实如何影响下一步动作。',
         '',
