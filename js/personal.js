@@ -118,14 +118,16 @@ const Personal = {
     if(btn){ btn.disabled = true; btn.textContent = '校验邀请码...'; }
     try{
       const existedBefore = Store.findInviteCode(code);
-      const syncResult = Store.syncInviteCodesFromServer ? await Store.syncInviteCodesFromServer() : { ok:false };
+      const syncResult = !existedBefore && Store.fetchInviteCodeFromServer
+        ? await Store.fetchInviteCodeFromServer(code)
+        : { ok:!!existedBefore };
       const existedAfter = Store.findInviteCode(code);
       if(!existedBefore && !existedAfter){
         const normalized = String(code||'').trim().toUpperCase();
         if(/^AIXG0802-/.test(normalized)){
           throw new Error(syncResult?.ok
             ? '邀请码台账已同步，但没有找到这个码。请检查是否输入错字符，或换一个未使用的邀请码。'
-            : `未能同步首批邀请码台账。请确认当前页面是通过 npm start 的 http://127.0.0.1 访问，不要用 file:// 打开。${syncResult?.error ? '原因：'+syncResult.error : ''}`);
+            : `没有找到这个邀请码。请检查是否输入错字符，或联系发放邀请码的人确认。${syncResult?.error ? '原因：'+syncResult.error : ''}`);
         }
       }
       if(btn) btn.textContent = '开通中...';

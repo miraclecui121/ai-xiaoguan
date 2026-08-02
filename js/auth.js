@@ -52,7 +52,7 @@ const Auth = {
       if(avatarEl) avatarEl.textContent = user.avatar || user.name.charAt(0);
       if(nameEl) nameEl.textContent = user.name;
       const entMenu = document.getElementById('entMenuGroup');
-      if(entMenu) entMenu.style.display = Store.isAdmin() ? '' : 'none';
+      if(entMenu) entMenu.style.display = Store.isAdmin() && !Store.isPersonalWorkspace() ? '' : 'none';
     }
     // 刷新铃铛
     App.refreshNotifBadge();

@@ -423,7 +423,9 @@ const Opportunity = {
           <div class="form-row"><label class="form-label">所属客户 <span class="req">*</span></label>
             <select class="form-select" id="f_customerId" onchange="Opportunity.onCustomerChange()">${Utils.options(Store.customers().map(c=>({value:c.id,label:c.shortName||c.name})),preCust,'请选择')}</select></div>
           <div class="form-row"><label class="form-label">产品方案</label>
-            <select class="form-select" id="f_product">${Utils.options(DICT.products,o.product,'请选择')}</select></div>
+            <input class="form-input" id="f_product" list="productOptions" value="${Utils.esc(o.product||'')}" placeholder="可选择，也可直接输入你的产品/服务">
+            <datalist id="productOptions">${(DICT.products||[]).map(p=>`<option value="${Utils.esc(p)}"></option>`).join('')}</datalist>
+            <small class="form-hint">常用选项可在 <a href="#" onclick="App.openProductDictSettings();return false">系统设置 → 字段配置 → 产品方案</a> 中维护；直接输入的新方案保存后也会加入常用选项。</small></div>
         </div>
         <div class="form-grid-3">
           <div class="form-row"><label class="form-label">商机金额(元) <span class="req">*</span></label><input class="form-input" id="f_amount" type="number" value="${o.amount||''}" placeholder="如：5800000"></div>
@@ -462,8 +464,10 @@ const Opportunity = {
     if(!name){Toast.show('请填写商机名称','error');return;}
     if(!customerId){Toast.show('请选择客户','error');return;}
     if(!amount){Toast.show('请填写金额','error');return;}
+    const product = val('f_product');
+    if(product) Opportunity.ensureProductOption(product);
     const data={
-      name,customerId,product:val('f_product'),amount,budget:Number(val('f_budget'))||0,
+      name,customerId,product,amount,budget:Number(val('f_budget'))||0,
       status:val('f_status')||'open',
       applyDept:val('f_applyDept'),stage:Number(val('f_stage')),competition:val('f_competition'),
       winProbability:Number(val('f_winProbability'))||0,purchaseMode:val('f_purchaseMode'),
@@ -515,6 +519,15 @@ const Opportunity = {
     }
     Modal.close();App.navigate('opportunity');
     function val(x){return document.getElementById(x).value.trim();}
+  },
+  ensureProductOption(product){
+    const value = String(product||'').trim();
+    if(!value) return;
+    DICT.products = DICT.products || [];
+    if(DICT.products.some(p=>String(p).trim()===value)) return;
+    DICT.products.push(value);
+    Store.db.settings.dict = DICT.getCustom();
+    Store.save();
   },
   remove(id){
     Modal.confirm('删除商机','⚠️ 确认删除该商机？此操作不可撤销。',()=>{

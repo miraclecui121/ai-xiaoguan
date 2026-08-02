@@ -295,7 +295,7 @@ const App = {
     const crmStyle = App.crmIntegrationCollapsed ? 'display:none' : '';
     return `
     <div class="page-head">
-      <div><div class="page-title">⚙️ 系统设置</div><div class="page-desc">机构信息、数据底座、AI配置、订阅与积分、数据字典、CRM对接</div></div>
+      <div><div class="page-title">⚙️ 系统设置</div><div class="page-desc">机构信息、数据底座、AI配置、订阅与积分、字段配置、CRM对接。商机里的“产品方案”在字段配置里自定义。</div></div>
     </div>
     <div class="card">
       <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
@@ -354,11 +354,11 @@ const App = {
       </div>
       </div>
     </div>
-    ${Store.isAdmin() ? App.renderInviteAdminCard() + App.renderAdminUsageLogCard() : ''}
+    ${Store.canManageInvites && Store.canManageInvites() ? App.renderInviteAdminCard() + App.renderAdminUsageLogCard() : ''}
     ${App.renderSubscriptionCard(subTxt, subStyle)}
     <div class="card">
       <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
-        <span>📋 数据字典（字段配置） <button class="btn btn-sm settings-collapse-toggle" onclick="App.toggleDictConfig()" id="dictConfigToggle">${dictTxt}</button></span>
+        <span>📋 字段配置 <small style="font-weight:500;color:var(--text-3)">客户行业、商机阶段、产品方案等选项</small> <button class="btn btn-sm settings-collapse-toggle" onclick="App.toggleDictConfig()" id="dictConfigToggle">${dictTxt}</button></span>
         <div>
           <button class="btn btn-ghost btn-sm" onclick="App.dictResetAll()">恢复全部默认</button>
           <button class="btn btn-primary btn-sm" onclick="App.saveDict()">保存字典</button>
@@ -589,6 +589,10 @@ const App = {
   },
 
   generateInviteCodesFromForm(){
+    if(!Store.canManageInvites || !Store.canManageInvites()){
+      Toast.show('当前账号无权生成邀请码', 'error');
+      return;
+    }
     try{
       const codes = Store.generateInviteCodes({
         prefix:document.getElementById('invPrefix')?.value || 'AIXG',
@@ -614,6 +618,10 @@ const App = {
   },
 
   copyInviteLink(link){
+    if(!Store.canManageInvites || !Store.canManageInvites()){
+      Toast.show('当前账号无权查看邀请码链接', 'error');
+      return;
+    }
     const text = String(link || '');
     try{
       const u = new URL(text, location.origin);
@@ -628,6 +636,10 @@ const App = {
   },
 
   toggleInviteCode(code){
+    if(!Store.canManageInvites || !Store.canManageInvites()){
+      Toast.show('当前账号无权管理邀请码', 'error');
+      return;
+    }
     const item = Store.findInviteCode(code);
     if(!item) return Toast.show('邀请码不存在', 'error');
     item.status = item.status==='disabled' ? 'active' : 'disabled';
@@ -1400,6 +1412,17 @@ const App = {
   },
 
   // ===== 数据字典编辑器 =====
+  openProductDictSettings(){
+    Modal.close();
+    App.dictConfigCollapsed = false;
+    App.navigate('settings');
+    setTimeout(()=>{
+      const card = document.getElementById('dict-card-products');
+      card?.scrollIntoView({ behavior:'smooth', block:'center' });
+      card?.classList.add('dict-card-highlight');
+      setTimeout(()=>card?.classList.remove('dict-card-highlight'), 1800);
+    }, 120);
+  },
   renderDictCard(key){
     const meta = DICT.META[key];
     const items = DICT[key];

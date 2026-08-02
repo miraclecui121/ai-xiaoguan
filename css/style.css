@@ -248,6 +248,9 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 }
 .form-textarea{height:auto;padding:9px 12px;resize:vertical;min-height:72px}
 .form-input:focus,.form-select:focus,.form-textarea:focus{border-color:var(--primary-light);box-shadow:0 0 0 3px rgba(13,148,136,.12)}
+.form-hint{display:block;margin-top:6px;font-size:12px;line-height:1.5;color:var(--text-3)}
+.form-hint a{color:var(--primary);text-decoration:none;font-weight:600}
+.form-hint a:hover{text-decoration:underline}
 .form-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .form-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
 .form-grid-4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px}
@@ -782,6 +785,7 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 /* ========== 数据字典编辑器 ========== */
 .dict-editor{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px}
 .dict-card{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg-card)}
+.dict-card-highlight{box-shadow:0 0 0 3px rgba(15,118,110,.18),0 12px 30px rgba(15,63,60,.12);border-color:var(--primary-light)}
 .dict-card-head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg);border-bottom:1px solid var(--border)}
 .dict-card-title{font-weight:600;font-size:13px;color:var(--text-1)}
 .dict-card-actions{display:flex;gap:6px}

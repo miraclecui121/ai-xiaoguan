@@ -11,6 +11,7 @@ import QRCode from "qrcode";
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ENV_PATH = path.join(ROOT, ".env.local");
 const LOG_DIR = path.join(ROOT, "logs");
+const INVITE_LEDGER_FILE = path.join(ROOT, "data", "invite-ledger.json");
 const MAX_BODY_BYTES = 320 * 1024;
 const MAX_CLOUD_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_MESSAGE_CHARS = 24000;
@@ -229,6 +230,14 @@ const server = createServer(async (req, res) => {
 
     if (url.pathname === "/api/admin/usage-summary" && req.method === "POST") {
       return handleAdminUsageSummary(req, res);
+    }
+
+    if (url.pathname === "/api/invite-ledger/codes" && req.method === "GET") {
+      return handleInviteLedgerCodes(req, res);
+    }
+
+    if (url.pathname === "/api/invite-ledger/validate" && req.method === "GET") {
+      return handleInviteLedgerValidate(req, res, url);
     }
 
     if (req.method !== "GET" && req.method !== "HEAD") {
@@ -860,6 +869,90 @@ async function handleAdminUsageSummary(req, res) {
   return sendJson(res, 200, { success: true, data: summary });
 }
 
+async function handleInviteLedgerValidate(req, res, url) {
+  if (!isAllowedOrigin(req)) {
+    await writeLog("security", req, { event: "origin_forbidden", path: req.url || "" });
+    return sendJson(res, 403, { success: false, error: "origin_forbidden" });
+  }
+  if (!checkRateLimit(`invite-validate:${clientKey(req)}`)) {
+    await writeLog("security", req, { event: "rate_limited", path: req.url || "" });
+    return sendJson(res, 429, { success: false, error: "rate_limited" });
+  }
+  const code = sanitizeShortParam(url.searchParams.get("code")).toUpperCase();
+  if (!code) return sendJson(res, 400, { success: false, error: "code_required", message: "请输入邀请码" });
+  const item = await findInviteLedgerCode(code);
+  await writeLog("audit", req, { event: "invite_code_validated", action: "invite_code_validate", code, result: item ? "found" : "not_found" });
+  if (!item) return sendJson(res, 404, { success: false, error: "invite_not_found", message: "邀请码不存在" });
+  if (item.status === "disabled") return sendJson(res, 400, { success: false, error: "invite_disabled", message: "邀请码已停用" });
+  const expiresAt = item.expiresAt || "";
+  if (expiresAt && new Date(`${expiresAt}T23:59:59`) < new Date()) {
+    return sendJson(res, 400, { success: false, error: "invite_expired", message: "邀请码已过期" });
+  }
+  if (Number(item.maxUses || 0) > 0 && Number(item.usedCount || 0) >= Number(item.maxUses || 0)) {
+    return sendJson(res, 400, { success: false, error: "invite_used_up", message: "邀请码使用次数已用完" });
+  }
+  return sendJson(res, 200, { success: true, data: { code: publicInviteCode(item) } });
+}
+
+async function handleInviteLedgerCodes(req, res) {
+  if (!isAllowedOrigin(req)) {
+    await writeLog("security", req, { event: "origin_forbidden", path: req.url || "" });
+    return sendJson(res, 403, { success: false, error: "origin_forbidden" });
+  }
+  if (!config.adminLogToken) {
+    return sendJson(res, 503, { success: false, error: "admin_log_token_not_configured" });
+  }
+  const token = String(req.headers["x-admin-log-token"] || "");
+  if (!safeEqualText(token, config.adminLogToken)) {
+    await writeLog("security", req, { event: "invite_ledger_codes_denied", path: req.url || "" });
+    return sendJson(res, 401, { success: false, error: "unauthorized" });
+  }
+  if (!checkRateLimit(`invite-codes:${clientKey(req)}`)) {
+    await writeLog("security", req, { event: "rate_limited", path: req.url || "" });
+    return sendJson(res, 429, { success: false, error: "rate_limited" });
+  }
+  const codes = await readInviteLedgerCodes();
+  await writeLog("audit", req, { event: "invite_ledger_codes_viewed", action: "invite_ledger_codes", result: "success", count: codes.length });
+  return sendJson(res, 200, { success: true, data: { codes: codes.map(publicInviteCode) } });
+}
+
+async function findInviteLedgerCode(code) {
+  const codes = await readInviteLedgerCodes();
+  return codes.find((item) => String(item.code || "").toUpperCase() === code) || null;
+}
+
+async function readInviteLedgerCodes() {
+  try {
+    const text = await readFile(INVITE_LEDGER_FILE, "utf8");
+    const ledger = JSON.parse(text || "{}");
+    return Array.isArray(ledger.codes) ? ledger.codes : [];
+  } catch {
+    return [];
+  }
+}
+
+function publicInviteCode(item = {}) {
+  return {
+    code: String(item.code || "").toUpperCase(),
+    type: item.type || "gift",
+    plan: item.plan || "personal_trial",
+    planName: item.planName || "个人体验版",
+    sourceChannel: item.sourceChannel || "",
+    campaignName: item.campaignName || "",
+    maxUses: Number(item.maxUses || 1),
+    usedCount: Number(item.usedCount || 0),
+    aiCallQuota: Number(item.aiCallQuota || 0),
+    searchQuota: Number(item.searchQuota || 0),
+    customerLimit: Number(item.customerLimit || 0),
+    expiresAt: item.expiresAt || "",
+    status: item.status || "active",
+    remark: item.remark || "",
+    createdAt: item.createdAt || "",
+    createdBy: item.createdBy || "invite-ledger",
+    issuedAt: item.issuedAt || "",
+  };
+}
+
 async function handlePlatformSearch(req, res) {
   if (!config.doubaoSearchApiKey) {
     await writeLog("ai-usage", req, { event: "platform_search_rejected", reason: "missing_doubao_search_api_key" });
@@ -1448,6 +1541,7 @@ async function serveStatic(urlPath, req, res) {
 function isSensitivePath(pathname) {
   const clean = pathname.replace(/\\/g, "/");
   if (clean === "/js/expert-prompts.js") return true;
+  if (clean === "/data/invite-ledger.json" || clean === "/data/invite-ledger.csv") return true;
   if (/^\/\./.test(clean)) return true;
   if (/^\/(logs|analysis|scripts|skillhub-packages|public|src|worker|tests|dist)(\/|$)/.test(clean)) return true;
   if (/^\/(server\.mjs|MEMORY\.md|AGENTS\.md|package\.json|package-lock\.json)$/.test(clean)) return true;

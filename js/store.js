@@ -112,7 +112,6 @@ const Store = {
       Store.save();
     }
     Store.ensureWorkspaceDefaults();
-    await Store.syncInviteCodesFromServer();
   },
 
   ensureWorkspaceDefaults(){
@@ -532,23 +531,72 @@ const Store = {
     const u = Store.currentUser();
     return u && (u.role==='admin' || u.role==='superadmin');
   },
+  isPlatformAdmin(){
+    const u = Store.currentUser();
+    const ent = Store.currentEnterprise();
+    return !!(u && (u.role==='admin' || u.role==='superadmin') && ent?.id==='ent_001' && Store.currentWorkspaceType()==='demo');
+  },
+  canManageInvites(){
+    return Store.isPlatformAdmin();
+  },
 
   inviteCodes(){
     Store.ensureWorkspaceDefaults();
     return Store.db.settings.inviteCodes || [];
   },
+  mergeInviteCode(item){
+    if(!item?.code) return null;
+    Store.ensureWorkspaceDefaults();
+    const normalized = String(item.code||'').toUpperCase();
+    const existing = Store.inviteCodes().find(c=>String(c.code||'').toUpperCase()===normalized);
+    const safe = {
+      code: normalized,
+      type: item.type || 'gift',
+      plan: item.plan || 'personal_trial',
+      planName: item.planName || '个人体验版',
+      sourceChannel: item.sourceChannel || '社群内测',
+      campaignName: item.campaignName || '',
+      maxUses: Number(item.maxUses||1),
+      usedCount: Number(item.usedCount||0),
+      aiCallQuota: Number(item.aiCallQuota||Store.PERSONAL_TRIAL_AI_QUOTA),
+      searchQuota: Number(item.searchQuota||Store.PERSONAL_TRIAL_SEARCH_QUOTA),
+      customerLimit: Number(item.customerLimit||Store.PERSONAL_TRIAL_CUSTOMER_LIMIT),
+      expiresAt: item.expiresAt || '',
+      status: item.status || 'active',
+      remark: item.remark || '',
+      createdAt: item.createdAt || Utils.now(),
+      createdBy: item.createdBy || 'server',
+      issuedAt: item.issuedAt || '',
+    };
+    if(existing) Object.assign(existing, safe);
+    else Store.db.settings.inviteCodes.push(safe);
+    Store.save();
+    return existing || safe;
+  },
+  async fetchInviteCodeFromServer(code){
+    const normalized = String(code||'').trim().toUpperCase();
+    if(!normalized || typeof fetch==='undefined') return { ok:false, error:'empty_code' };
+    try{
+      const resp = await fetch(`/api/invite-ledger/validate?code=${encodeURIComponent(normalized)}`, { cache:'no-store', credentials:'include' });
+      const data = await resp.json().catch(()=>null);
+      if(resp.ok && data?.success && data?.data?.code){
+        const item = Store.mergeInviteCode(data.data.code);
+        return { ok:true, item };
+      }
+      return { ok:false, error:data?.message || data?.error || `http_${resp.status}` };
+    }catch(e){
+      return { ok:false, error:e.message || 'invite_validate_failed' };
+    }
+  },
   async syncInviteCodesFromServer(){
+    if(!Store.canManageInvites()) return { ok:false, count:0, error:'仅平台管理员可同步全量邀请码台账' };
     if(typeof fetch==='undefined') return { ok:false, count:0, error:'当前浏览器不支持联网同步邀请码台账' };
     try{
-      let resp = await fetch('/api/invite-ledger/codes', { cache:'no-store' });
+      const token = (typeof localStorage!=='undefined' && localStorage.getItem('aixg_admin_log_token')) || '';
+      let resp = await fetch('/api/invite-ledger/codes', { cache:'no-store', headers:{'X-Admin-Log-Token':token} });
       let data = await resp.json().catch(()=>null);
-      if(!resp.ok || !Array.isArray(data?.data?.codes)){
-        resp = await fetch('data/invite-ledger.json', { cache:'no-store' });
-        data = await resp.json().catch(()=>null);
-        if(Array.isArray(data?.codes)) data = { data:{ codes:data.codes } };
-      }
       const incoming = Array.isArray(data?.data?.codes) ? data.data.codes : [];
-      if(!resp.ok || !incoming.length) return { ok:false, count:0, error:'没有从后端台账读取到邀请码' };
+      if(!resp.ok || !incoming.length) return { ok:false, count:0, error:data?.message || data?.error || '没有从后端台账读取到邀请码' };
       Store.ensureWorkspaceDefaults();
       const existing = new Map(Store.db.settings.inviteCodes.map(c=>[String(c.code||'').toUpperCase(), c]));
       let changed = false;
@@ -627,6 +675,7 @@ const Store = {
     return { ok:true, item };
   },
   generateInviteCodes({ prefix='AIXG', count=1, type='gift', plan='personal_trial', planName='个人体验版', sourceChannel='社群内测', campaignName='体验活动', maxUses=1, aiCallQuota=Store.PERSONAL_TRIAL_AI_QUOTA, searchQuota=Store.PERSONAL_TRIAL_SEARCH_QUOTA, customerLimit=Store.PERSONAL_TRIAL_CUSTOMER_LIMIT, expiresAt='', remark='' }={}){
+    if(!Store.canManageInvites()) throw new Error('当前账号无权生成邀请码');
     Store.ensureWorkspaceDefaults();
     const codes = [];
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -653,6 +702,7 @@ const Store = {
     return codes;
   },
   inviteUsageSummary(){
+    if(!Store.canManageInvites()) return [];
     const activations = Store.inviteActivations();
     const usageEvents = Store.db.settings.aiUsageEvents || [];
     const searchEvents = Store.db.settings.searchUsageEvents || [];
