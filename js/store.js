@@ -215,6 +215,11 @@ const Store = {
         Store.cloud.restored = true;
         return { ok:true, restored:true, updatedAt:data.data.updatedAt || '' };
       }
+      const migrated = await Store.bindLocalPersonalWorkspaceToWechat(profile);
+      if(migrated?.ok){
+        Store.cloud.restored = true;
+        return { ok:true, restored:true, migrated:true, enterpriseId:migrated.enterpriseId };
+      }
       Store.cloud.restored = true;
       Store.queueCloudSync('init-empty-cloud');
       return { ok:true, restored:false };
@@ -257,6 +262,46 @@ const Store = {
     }finally{
       Store._applyingCloud = false;
     }
+  },
+  findLocalPersonalWorkspaceForWechat(profile={}){
+    const externalId = String(profile.externalId || Store.cloud.externalId || '').trim();
+    const personalEnts = Store.collection('enterprises')
+      .filter(e=>e.workspaceType==='personal')
+      .sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));
+    for(const ent of personalEnts){
+      const users = Store.collection('users').filter(u=>u.enterpriseId===ent.id && u.status!=='disabled');
+      const sameWechat = users.find(u=>u.identityProvider==='wechat_oauth' && u.externalId===externalId);
+      if(sameWechat) return { ent, user:sameWechat, alreadyBound:true };
+      const unbound = users.find(u=>u.role==='admin' && (!u.externalId || u.identityProvider!=='wechat_oauth')) ||
+        users.find(u=>!u.externalId || u.identityProvider!=='wechat_oauth');
+      if(unbound) return { ent, user:unbound, alreadyBound:false };
+    }
+    return null;
+  },
+  async bindLocalPersonalWorkspaceToWechat(profile={}){
+    const externalId = String(profile.externalId || Store.cloud.externalId || '').trim();
+    if(!externalId) return { ok:false, reason:'missing_external_id' };
+    const candidate = Store.findLocalPersonalWorkspaceForWechat(profile);
+    if(!candidate) return { ok:false, reason:'no_local_personal_workspace' };
+    const { ent, user } = candidate;
+    const nickname = String(profile.nickname || user.name || '微信用户').trim().slice(0,30) || user.name || '微信用户';
+    Store.update('users', user.id, {
+      name: user.name || nickname,
+      account: user.account || `wx_${externalId.replace(/[^A-Za-z0-9]/g,'').slice(-10)}`,
+      password: '',
+      avatar: user.avatar || '微',
+      identityProvider:'wechat_oauth',
+      externalId,
+      sourceChannel: user.sourceChannel || profile.sourceChannel || '微信授权',
+      campaignName: user.campaignName || profile.campaignName || '',
+      inviteCode: user.inviteCode || ent.inviteCode || profile.inviteCode || '',
+      lastLoginAt: Utils.now(),
+    });
+    Store.session = { enterpriseId:ent.id, userId:user.id, loginAt:Utils.now(), authProvider:'wechat_oauth' };
+    Store.saveSession();
+    Store.save();
+    await Store.flushCloudWorkspace('bind-local-personal-workspace');
+    return { ok:true, enterpriseId:ent.id, userId:user.id, alreadyBound:candidate.alreadyBound };
   },
   cloudWorkspaceSnapshot(){
     const clone = JSON.parse(JSON.stringify(Store.db || {}));
@@ -760,7 +805,12 @@ const Store = {
       activatedAt:Utils.now(),
     };
     Store.db.settings.inviteActivations.push(activation);
-    Store.session = { enterpriseId: entId, userId, loginAt: Utils.now() };
+    Store.session = {
+      enterpriseId: entId,
+      userId,
+      loginAt: Utils.now(),
+      authProvider: Store.currentUser()?.identityProvider === 'wechat_oauth' ? 'wechat_oauth' : (Store.currentUser()?.identityProvider || 'account'),
+    };
     Store.saveSession();
     Store.save();
     Store.reportInviteActivation(invite, activation);

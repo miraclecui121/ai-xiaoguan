@@ -51,7 +51,7 @@ const Personal = {
     const hasLogin = Store.isLoggedIn();
     const acq = Store.getAcquisition ? Store.getAcquisition() : {};
     const currentUser = Store.currentUser ? Store.currentUser() : null;
-    const isWechat = currentUser?.identityProvider === 'wechat_mock';
+    const isWechat = ['wechat_mock','wechat_oauth'].includes(currentUser?.identityProvider);
     const defaultName = isWechat ? (currentUser.name || '微信体验用户') : '';
     const defaultAccount = isWechat ? (currentUser.account || '') : '';
     const passwordField = isWechat
@@ -64,7 +64,7 @@ const Personal = {
       <div class="activation-panel">
         <div class="activation-note">
           <div class="activation-note-title">开通后你会获得一个独立的个人销售空间</div>
-          <div class="activation-note-desc">演示数据会保留用于体验；你的客户、联系人、商机、跟进记录会进入个人空间，AI专家将优先读取你的真实数据。</div>
+          <div class="activation-note-desc">演示数据会保留用于体验；你的客户、联系人、商机、跟进记录会进入个人空间，AI专家将优先读取你的真实数据。建议先微信授权再开通，这样 PC 和手机端都能使用同一空间。</div>
         </div>
         <div class="form-row"><label class="form-label">开通原因</label><input class="form-input" value="${Utils.esc(reason)}" disabled></div>
         <div class="form-grid-2">
@@ -88,7 +88,7 @@ const Personal = {
     const name = document.getElementById('actName')?.value.trim();
     const account = document.getElementById('actAccount')?.value.trim();
     const currentUser = Store.currentUser ? Store.currentUser() : null;
-    const isWechat = currentUser?.identityProvider === 'wechat_mock';
+    const isWechat = ['wechat_mock','wechat_oauth'].includes(currentUser?.identityProvider);
     const password = document.getElementById('actPassword')?.value.trim() || (isWechat ? 'wechat_auth' : '');
     const code = document.getElementById('actCode')?.value.trim();
     if(err) err.style.display = 'none';
