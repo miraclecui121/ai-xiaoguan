@@ -756,7 +756,13 @@ const AI = {
       mode,
       loadingAt:Date.now(),
     });
-    AI.renderMessages();
+    AI.renderMessages({ scroll:'bottom' });
+  },
+
+  finishLoadingAnswer(content){
+    const idx = AI.messages.length - 1;
+    AI.messages[idx] = { role:'bot', content };
+    AI.renderMessages({ scroll:'answerStart', targetIndex:idx });
   },
 
   loadingSteps(m){
@@ -861,8 +867,7 @@ const AI = {
             ans=Experts.run(expertId, ctxId);
           }
         }
-        AI.messages[AI.messages.length-1]={role:'bot',content:AI.searchEvidencePrefix()+ans};
-        AI.renderMessages();
+        AI.finishLoadingAnswer(AI.searchEvidencePrefix()+ans);
         const side=document.getElementById('aiSide');
         if(side)side.innerHTML=AI.renderInsights();
       },1800);
@@ -892,8 +897,7 @@ const AI = {
         if(!ans || ans==='未找到该专家'){
           ans = `> ⚠️ 无法完成分析。请配置AI大模型以获得智能回复，或指定具体的分析对象后重试。`;
         }
-        AI.messages[AI.messages.length-1] = {role:'bot', content: AI.searchEvidencePrefix() + ans};
-        AI.renderMessages();
+        AI.finishLoadingAnswer(AI.searchEvidencePrefix() + ans);
         const side = document.getElementById('aiSide');
         if(side) side.innerHTML = AI.renderInsights();
       }, 400);
@@ -916,8 +920,7 @@ const AI = {
             if(q) ans+=`\n\n---\n\n**针对「${q}」的补充分析**：\n`+AI.analyze(q);
           }
         }
-        AI.messages[AI.messages.length-1]={role:'bot',content:ans};
-        AI.renderMessages();
+        AI.finishLoadingAnswer(ans);
         const side=document.getElementById('aiSide');
         if(side)side.innerHTML=AI.renderInsights();
       },800);
@@ -945,8 +948,7 @@ const AI = {
         setTimeout(async ()=>{
           const llmAns=await AI.tryLLM(q);
           const ans=llmAns||AI.analyze(q);
-          AI.messages[AI.messages.length-1]={role:'bot',content:AI.searchEvidencePrefix()+ans};
-          AI.renderMessages();
+          AI.finishLoadingAnswer(AI.searchEvidencePrefix()+ans);
           const side=document.getElementById('aiSide');
           if(side)side.innerHTML=AI.renderInsights();
         },400);
@@ -973,8 +975,7 @@ const AI = {
         if(!ans||ans==='未找到该专家'){
           ans=`> ⚠️ 无法完成分析。请配置AI大模型以获得智能回复，或指定具体的分析对象后重试。`;
         }
-        AI.messages[AI.messages.length-1]={role:'bot',content:AI.searchEvidencePrefix()+ans};
-        AI.renderMessages();
+        AI.finishLoadingAnswer(AI.searchEvidencePrefix()+ans);
         const side=document.getElementById('aiSide');
         if(side)side.innerHTML=AI.renderInsights();
       },400);
@@ -985,16 +986,17 @@ const AI = {
     setTimeout(async ()=>{
       const llmAns = await AI.tryLLM(q);
       const ans = llmAns || (AI.isLLMReady() ? AI.llmFailureAnswer('自由对话') : AI.analyze(q));
-      AI.messages[AI.messages.length-1]={role:'bot',content:AI.searchEvidencePrefix()+ans};
-      AI.renderMessages();
+      AI.finishLoadingAnswer(AI.searchEvidencePrefix()+ans);
       const side=document.getElementById('aiSide');
       if(side)side.innerHTML=AI.renderInsights();
     },400);
   },
 
-  renderMessages(){
+  renderMessages(options={}){
     const box=document.getElementById('aiMsgs');
     if(!box)return;
+    const previousScrollTop = box.scrollTop;
+    const previousScrollHeight = box.scrollHeight;
     box.innerHTML=AI.messages.map(m=>{
       if(m.loading){
         const ex=m.expertId?Experts.get(m.expertId):null;
@@ -1025,14 +1027,33 @@ const AI = {
         </div>`;
       }
       const bubbleClass = String(m.content||'').startsWith('::ai-html\n') ? 'ai-bubble ai-bubble-welcome' : 'ai-bubble';
-      return `<div class="ai-msg ${m.role}">
+      return `<div class="ai-msg ${m.role}" data-msg-index="${AI.messages.indexOf(m)}">
         <div class="ai-avatar ${m.role}">${m.role==='bot'?'冠':'我'}</div>
         <div class="${bubbleClass}">${AI.formatContent(m.content)}</div>
       </div>`;
     }).join('');
-    box.scrollTop=box.scrollHeight;
+    AI.applyMessageScroll(box, options, previousScrollTop, previousScrollHeight);
     AI.syncLoadingTicker();
     AI.saveConversation();
+  },
+
+  applyMessageScroll(box, options={}, previousScrollTop=0, previousScrollHeight=0){
+    const mode = options.scroll || 'bottom';
+    if(mode === 'answerStart'){
+      const idx = Number.isFinite(Number(options.targetIndex)) ? Number(options.targetIndex) : AI.messages.length - 1;
+      const target = box.querySelector(`.ai-msg.bot[data-msg-index="${idx}"]`) || box.querySelector('.ai-msg.bot:last-of-type');
+      if(target){
+        const top = Math.max(0, target.offsetTop - 10);
+        box.scrollTo ? box.scrollTo({ top, behavior:'smooth' }) : (box.scrollTop = top);
+        return;
+      }
+    }
+    if(mode === 'preserve'){
+      const delta = box.scrollHeight - previousScrollHeight;
+      box.scrollTop = Math.max(0, previousScrollTop + delta);
+      return;
+    }
+    box.scrollTop = box.scrollHeight;
   },
 
   // markdown 富文本渲染（支持表格、标题、引用、分隔线、粗体）
