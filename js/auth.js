@@ -75,7 +75,7 @@ const Auth = {
         <span class="logo-icon">冠</span>
         <span class="logo-text">AI<span class="logo-accent">销冠</span></span>
       </div>
-      <div class="login-subtitle">AI销冠助手 · 个人版 / 企业版 ${isApi ? '<span class="badge badge-green" style="font-size:11px">云端版</span>' : '<span class="badge badge-gray" style="font-size:11px">本地体验版</span>'}</div>
+      <div class="login-subtitle">AI销冠助手 · 个人版 / 企业版 ${isApi || !Auth.isLocalHost() ? '<span class="badge badge-green" style="font-size:11px">云端版</span>' : '<span class="badge badge-gray" style="font-size:11px">本地体验版</span>'}</div>
 
       <div class="login-tabs login-tabs-single">
         <button class="login-tab active" id="loginTabLogin" onclick="Auth.switchTab('login')">登录</button>
@@ -91,7 +91,7 @@ const Auth = {
         </div>
         <div class="login-demo-hint">
           <div class="login-hint-title">首次登录后进入演示空间</div>
-          <div class="login-hint-item"><span class="badge badge-gold">演示体验</span> 默认演示数据 · 可体验 10 个销售分析视角</div>
+          <div class="login-hint-item"><span class="badge badge-gold">演示体验</span> 默认演示数据 · 可体验 10 个销售专家视角</div>
           <button class="login-hint-item login-demo-account" onclick="Auth.loginWithWechat()" type="button"><span class="badge badge-green">个人版</span> 微信登录后输入邀请码开通 · PC/手机同一空间</button>
           <div class="login-hint-item"><span class="badge badge-gray">切换微信</span> 退出当前身份后，用另一个微信重新授权</div>
         </div>
@@ -221,7 +221,7 @@ const Auth = {
   shouldUseWechatQrLogin(){
     if(Auth.isLocalHost()) return false;
     if(Auth.isWechatBrowser()) return false;
-    return window.matchMedia ? window.matchMedia('(min-width: 760px)').matches : window.innerWidth >= 760;
+    return true;
   },
 
   async restoreWechatOAuthSession(){
@@ -291,24 +291,32 @@ const Auth = {
 
   async openWechatQrLogin(qs){
     Auth.cancelWechatQrLogin(false);
+    Modal.open({
+      title: '微信扫码登录',
+      size: 'sm',
+      body: `
+        <div class="wechat-qr-login">
+          <div class="wechat-qr-loading">正在生成登录二维码...</div>
+          <div class="wechat-qr-desc">请稍等，生成后使用手机微信扫码授权。</div>
+        </div>`,
+      footer: `<button class="btn btn-ghost" onclick="Auth.cancelWechatQrLogin(true)">取消</button>`
+    });
     const resp = await fetch(`/api/auth/wechat/qr/start?${qs.toString()}`, { credentials:'include' });
     const data = await resp.json().catch(()=>null);
     if(!resp.ok || !data?.success || !data?.data?.qrId){
       throw new Error(data?.error || data?.message || '微信扫码登录初始化失败');
     }
     const qr = data.data;
-    Modal.open({
-      title: '微信扫码登录',
-      size: 'sm',
-      body: `
+    const bodyEl = document.getElementById('modalBody');
+    if(bodyEl){
+      bodyEl.innerHTML = `
         <div class="wechat-qr-login" id="wechatQrLoginBox">
           <div class="wechat-qr-img">${qr.qrSvg || ''}</div>
           <div class="wechat-qr-title">请使用手机微信扫码授权</div>
           <div class="wechat-qr-desc">扫码后在手机上确认授权，电脑端会自动登录。二维码约 ${Math.max(1, Math.floor((qr.expiresIn||300)/60))} 分钟内有效。</div>
           <div class="wechat-qr-status" id="wechatQrStatus">等待扫码确认...</div>
-        </div>`,
-      footer: `<button class="btn btn-ghost" onclick="Auth.cancelWechatQrLogin(true)">取消</button>`
-    });
+        </div>`;
+    }
     Auth.wechatQrTimer = setInterval(()=>Auth.pollWechatQrLogin(qr.qrId, qr.pollToken), 1800);
     await Auth.pollWechatQrLogin(qr.qrId, qr.pollToken);
   },

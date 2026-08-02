@@ -730,6 +730,11 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 .wechat-qr-img svg{width:100%;height:100%;display:block}
 .wechat-qr-title{font-size:16px;font-weight:700;color:var(--text);margin-bottom:6px}
 .wechat-qr-desc{font-size:13px;color:var(--text-2);line-height:1.7;margin:0 auto 10px;max-width:310px}
+.wechat-qr-loading{
+  width:246px;min-height:120px;margin:0 auto 14px;border:1px solid var(--border);border-radius:14px;
+  background:linear-gradient(180deg,#f8fbfa,#eef8f5);display:flex;align-items:center;justify-content:center;
+  color:var(--primary);font-size:14px;font-weight:700;
+}
 .wechat-qr-status{
   display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:5px 12px;
   border-radius:999px;background:var(--primary-bg);color:var(--primary);font-size:12px;font-weight:600;
