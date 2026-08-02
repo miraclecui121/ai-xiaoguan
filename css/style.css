@@ -277,7 +277,7 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 .tl-content{font-size:13px;color:var(--text-2);background:var(--gray-bg);padding:8px 12px;border-radius:7px;margin-top:4px}
 
 /* 弹窗 */
-.modal-mask{position:fixed;inset:0;background:rgba(15,25,45,.55);z-index:1200;display:none;align-items:flex-start;justify-content:center;padding:40px 20px;overflow:auto;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
+.modal-mask{position:fixed;inset:0;background:rgba(15,25,45,.55);z-index:12000;display:none;align-items:flex-start;justify-content:center;padding:40px 20px;overflow:auto;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
 .modal-mask.show{display:flex}
 .modal{background:#fff;border-radius:12px;width:640px;max-width:100%;box-shadow:var(--shadow-lg);animation:pop .2s}
 .modal.lg{width:820px}
