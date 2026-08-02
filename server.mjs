@@ -1515,15 +1515,35 @@ function primaryCustomerName(entry = {}) {
 
 function detectCustomerName(text) {
   const value = String(text || "");
+  const nameChars = "[\\u4e00-\\u9fa5A-Za-z0-9（）()·]";
+  const orgSuffix = "(?:公司|集团|医院|学校|大学|果业|科技|委员会|中心|银行|政府|平台|连锁)";
   const patterns = [
-    /(?:客户|拜访|跟进|搜索|分析|会见|见|约见|面谈|沟通)(?:一家|一个|的)?([\u4e00-\u9fa5A-Za-z0-9（）()·]{3,40}(?:公司|集团|医院|学校|大学|果业|科技|委员会|中心|银行|政府|平台|连锁))/,
-    /([\u4e00-\u9fa5A-Za-z0-9（）()·]{3,40}(?:公司|集团|医院|学校|大学|果业|科技|委员会|中心|银行|政府|平台|连锁))/,
+    new RegExp(`(?:客户|拜访|跟进|搜索|分析|会见|见|约见|面谈|沟通)(?:一家|一个|的)?(${nameChars}{3,40}${orgSuffix})`),
+    new RegExp(`(${nameChars}{3,40}${orgSuffix})`),
+    new RegExp(`(?:拜访|跟进|搜索|分析|会见|约见|面谈|沟通|拜会|去见|要见|要去见|去拜访|要拜访|要去拜访|见)(?:一下|下|客户|一家|一个|的)?\\s*(${nameChars}{3,30}?)(?=(?:这个客户|这家公司|这个公司|该客户|客户|，|。|、|；|\\s|$))`, "i"),
   ];
   for (const pattern of patterns) {
     const matched = value.match(pattern)?.[1];
-    if (matched) return redactText(matched).replace(/[，。；、\s]+$/g, "").slice(0, 80);
+    const name = normalizeCustomerNameCandidate(matched);
+    if (isPlausibleCustomerName(name)) return name;
   }
   return "";
+}
+
+function normalizeCustomerNameCandidate(candidate) {
+  return redactText(candidate || "")
+    .replace(/^(?:一下|下|一家|一个|的|客户)+/g, "")
+    .replace(/(?:这个客户|这家公司|这个公司|该客户|客户)$/g, "")
+    .replace(/[，。；、\s]+$/g, "")
+    .slice(0, 80);
+}
+
+function isPlausibleCustomerName(name) {
+  if (!name || name.length < 3 || name.length > 80) return false;
+  if (/^(?:这个|那个|该|他们|她们|他|她|我|你|我们|你们|客户|公司|企业|产品|方案)/.test(name)) return false;
+  if (/(?:专家|顾问|助手|总经理|董事长|负责人|老板|经理|主任|先生|女士|老师|产品|售卖|销售|调用|查询|搜索|准备|偏好|特点|关心|什么)/.test(name)) return false;
+  if (/^(?:DeepSeek|WorkBuddy|workbuddy|CRM|AI)$/i.test(name)) return false;
+  return /[\u4e00-\u9fa5]/.test(name);
 }
 
 function minTextDate(a, b) {
