@@ -10,6 +10,10 @@ const Store = {
   SESSION_KEY: 'aiwin_crm_session',
   ACQ_KEY: 'aixg_acquisition',
   DEMO_TRIAL_DAYS: 3,
+  PERSONAL_TRIAL_INVITE_DAYS: 15,
+  PERSONAL_TRIAL_AI_QUOTA: 50,
+  PERSONAL_TRIAL_SEARCH_QUOTA: 30,
+  PERSONAL_TRIAL_CUSTOMER_LIMIT: 10,
   db: null,
   session: { enterpriseId: null, userId: null, loginAt: null },
   // 当前模式：'api' 或 'local'，由 init() 检测后设定
@@ -122,7 +126,7 @@ const Store = {
     });
     if(!Store.db.settings.inviteCodes){
       Store.db.settings.inviteCodes = [
-        { code:'WIN-DEMO-2026', type:'gift', plan:'personal_trial', planName:'个人体验版', sourceChannel:'社群内测', campaignName:'默认演示', maxUses:20, usedCount:0, aiCallQuota:200, customerLimit:100, expiresAt:'2026-12-31', status:'active', remark:'内测赠送码', createdAt:Utils.now(), createdBy:'system' },
+        { code:'WIN-DEMO-2026', type:'gift', plan:'personal_trial', planName:'个人体验版', sourceChannel:'社群内测', campaignName:'默认演示', maxUses:20, usedCount:0, aiCallQuota:Store.PERSONAL_TRIAL_AI_QUOTA, searchQuota:Store.PERSONAL_TRIAL_SEARCH_QUOTA, customerLimit:Store.PERSONAL_TRIAL_CUSTOMER_LIMIT, expiresAt:'', status:'active', remark:'内测赠送码；发放后15天内有效', createdAt:Utils.now(), createdBy:'system' },
         { code:'WIN-STD-2026', type:'paid', plan:'personal_standard', planName:'个人标准版', sourceChannel:'付费开通', campaignName:'标准版', maxUses:100, usedCount:0, aiCallQuota:1000, customerLimit:500, expiresAt:'2026-12-31', status:'active', remark:'标准开通码', createdAt:Utils.now(), createdBy:'system' },
         { code:'CXN-INTERNAL', type:'internal', plan:'personal_unlimited', planName:'内部测试版', sourceChannel:'内部测试', campaignName:'内部', maxUses:999, usedCount:0, aiCallQuota:999999, customerLimit:99999, expiresAt:'2027-12-31', status:'active', remark:'内部测试', createdAt:Utils.now(), createdBy:'system' },
       ];
@@ -138,6 +142,7 @@ const Store = {
       c.status = c.status || 'active';
       if(c.searchQuota === undefined) c.searchQuota = c.type==='internal' ? 99999 : (c.type==='paid' ? 300 : 50);
     });
+    Store.normalizePersonalTrialBenefits();
     const deepseek = Store.db.settings.aiModels?.providers?.find(p=>p.id==='deepseek');
     if(deepseek && (deepseek.name==='DeepSeek V3' || deepseek.model==='deepseek-chat')){
       deepseek.name = '企业自配 DeepSeek V4-Flash';
@@ -165,6 +170,30 @@ const Store = {
   },
   getAcquisition(){
     try{ return JSON.parse(localStorage.getItem(Store.ACQ_KEY) || '{}'); }catch(e){ return {}; }
+  },
+
+  dateOnlyAfterDays(base, days){
+    const d = new Date(base || Utils.now());
+    const valid = Number.isNaN(d.getTime()) ? new Date() : d;
+    valid.setDate(valid.getDate() + Number(days||0));
+    return valid.toISOString().slice(0,10);
+  },
+
+  inviteExpiresAtFromIssue(item={}){
+    return Store.dateOnlyAfterDays(item.issuedAt || item.createdAt || Utils.now(), Store.PERSONAL_TRIAL_INVITE_DAYS);
+  },
+
+  normalizePersonalTrialBenefits(){
+    if(!Store.db?.enterprises) return;
+    const inviteMap = new Map((Store.db.settings?.inviteCodes||[]).map(c=>[String(c.code||'').toUpperCase(), c]));
+    Store.db.enterprises.forEach(ent=>{
+      if(ent.workspaceType!=='personal' || ent.license!=='personal_trial') return;
+      const invite = inviteMap.get(String(ent.inviteCode||'').toUpperCase());
+      ent.aiCallQuota = Number(invite?.aiCallQuota || Store.PERSONAL_TRIAL_AI_QUOTA);
+      ent.searchQuota = Number(invite?.searchQuota || Store.PERSONAL_TRIAL_SEARCH_QUOTA);
+      ent.customerLimit = Number(invite?.customerLimit || Store.PERSONAL_TRIAL_CUSTOMER_LIMIT);
+      ent.expireDate = invite?.expiresAt || ent.expireDate || Store.dateOnlyAfterDays(ent.createdAt || Utils.now(), Store.PERSONAL_TRIAL_INVITE_DAYS);
+    });
   },
 
   isWechatExperienceUser(user=Store.currentUser()){
@@ -202,6 +231,27 @@ const Store = {
       message: msLeft > 0
         ? `演示体验还剩 ${daysLeft} 天`
         : '3天演示体验期已结束。使用邀请码开通个人空间后，可继续导入客户并调用 AI 销售分析。',
+    };
+  },
+
+  personalWorkspaceExpiryState(ent=Store.currentEnterprise()){
+    if(!ent || ent.workspaceType!=='personal' || ent.license!=='personal_trial') return { applies:false, ok:true };
+    if(!ent.expireDate) return { applies:true, ok:true, daysLeft:null };
+    const expiresAt = new Date(ent.expireDate + 'T23:59:59');
+    if(Number.isNaN(expiresAt.getTime())) return { applies:true, ok:true, daysLeft:null };
+    const msLeft = expiresAt.getTime() - Date.now();
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const expiryStart = new Date(ent.expireDate + 'T00:00:00');
+    const daysLeft = Math.max(0, Math.ceil((expiryStart.getTime() - todayStart.getTime()) / (24 * 60 * 60 * 1000)));
+    return {
+      applies:true,
+      ok: msLeft >= 0,
+      daysLeft,
+      expiresAt: ent.expireDate,
+      message: msLeft >= 0
+        ? `个人体验版还剩 ${daysLeft} 天`
+        : '个人体验版使用期限已结束。请联系发放邀请码的人续期或升级权益。',
     };
   },
 
@@ -383,11 +433,11 @@ const Store = {
           campaignName: raw.campaignName || '首批体验',
           maxUses: Number(raw.maxUses||1),
           usedCount: Number(raw.usedCount||0),
-          aiCallQuota: Number(raw.aiCallQuota||100),
-          searchQuota: Number(raw.searchQuota||30),
-          customerLimit: Number(raw.customerLimit||100),
-          expiresAt: raw.expiresAt || '2026-12-31',
-          status: raw.status === 'disabled' ? 'disabled' : 'active',
+          aiCallQuota: Number(raw.aiCallQuota||Store.PERSONAL_TRIAL_AI_QUOTA),
+          searchQuota: Number(raw.searchQuota||Store.PERSONAL_TRIAL_SEARCH_QUOTA),
+          customerLimit: Number(raw.customerLimit||Store.PERSONAL_TRIAL_CUSTOMER_LIMIT),
+          expiresAt: raw.expiresAt || (raw.issuedAt ? Store.inviteExpiresAtFromIssue(raw) : ''),
+          status: ['disabled','issued','activated'].includes(raw.status) ? raw.status : 'active',
           remark: raw.remark || 'Excel台账批量码',
           createdAt: raw.createdAt || Utils.now(),
           createdBy: raw.createdBy || 'invite-ledger',
@@ -439,12 +489,13 @@ const Store = {
   validateInviteCode(code){
     const item = Store.findInviteCode(code);
     if(!item) return { ok:false, message:'邀请码不存在' };
-    if(item.status && item.status!=='active') return { ok:false, message:'邀请码已停用' };
-    if(item.expiresAt && new Date(item.expiresAt+'T23:59:59') < new Date()) return { ok:false, message:'邀请码已过期' };
+    if(item.status === 'disabled') return { ok:false, message:'邀请码已停用' };
+    const expiresAt = item.expiresAt || (item.issuedAt ? Store.inviteExpiresAtFromIssue(item) : '');
+    if(expiresAt && new Date(expiresAt+'T23:59:59') < new Date()) return { ok:false, message:'邀请码已过期' };
     if(Number(item.maxUses||0)>0 && Number(item.usedCount||0)>=Number(item.maxUses||0)) return { ok:false, message:'邀请码使用次数已用完' };
     return { ok:true, item };
   },
-  generateInviteCodes({ prefix='AIXG', count=1, type='gift', plan='personal_trial', planName='个人体验版', sourceChannel='社群内测', campaignName='体验活动', maxUses=1, aiCallQuota=100, searchQuota=30, customerLimit=100, expiresAt='', remark='' }={}){
+  generateInviteCodes({ prefix='AIXG', count=1, type='gift', plan='personal_trial', planName='个人体验版', sourceChannel='社群内测', campaignName='体验活动', maxUses=1, aiCallQuota=Store.PERSONAL_TRIAL_AI_QUOTA, searchQuota=Store.PERSONAL_TRIAL_SEARCH_QUOTA, customerLimit=Store.PERSONAL_TRIAL_CUSTOMER_LIMIT, expiresAt='', remark='' }={}){
     Store.ensureWorkspaceDefaults();
     const codes = [];
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -460,7 +511,7 @@ const Store = {
         code, type, plan, planName, sourceChannel, campaignName,
         maxUses:Number(maxUses||1), usedCount:0,
         aiCallQuota:Number(aiCallQuota||0), searchQuota:Number(searchQuota||0), customerLimit:Number(customerLimit||0),
-        expiresAt, status:'active', remark,
+        expiresAt, status:'active', remark: remark || '个人体验版：发放后15天内有效',
         createdAt:Utils.now(), createdBy:Store.currentUser()?.name || 'local-admin',
       };
       Store.db.settings.inviteCodes.push(item);
@@ -502,7 +553,7 @@ const Store = {
     const orgId = Utils.uid('org');
     const userId = Utils.uid('usr');
     const planName = invite.planName || '个人版';
-    const expiresAt = invite.expiresAt || (()=>{ const d=new Date(); d.setDate(d.getDate()+30); return d.toISOString().slice(0,10); })();
+    const expiresAt = invite.expiresAt || (invite.issuedAt ? Store.inviteExpiresAtFromIssue(invite) : Store.dateOnlyAfterDays(Utils.now(), Store.PERSONAL_TRIAL_INVITE_DAYS));
 
     Store.addEnterprise({
       id: entId,
@@ -559,6 +610,7 @@ const Store = {
       lastLoginAt: Utils.now(),
     });
     invite.usedCount = Number(invite.usedCount||0) + 1;
+    if(Number(invite.maxUses||0)>0 && Number(invite.usedCount||0)>=Number(invite.maxUses||0)) invite.status = 'activated';
     invite.lastUsedAt = Utils.now();
     invite.lastUsedBy = name;
     const activation = {
@@ -600,8 +652,10 @@ const Store = {
     const item = Store.findInviteCode(normalized);
     if(item){
       item.issuedAt = item.issuedAt || Utils.now();
+      item.expiresAt = item.expiresAt || Store.inviteExpiresAtFromIssue(item);
       item.issuedBy = Store.currentUser()?.name || '';
       item.issuedTo = issuedTo || item.issuedTo || '';
+      if(item.status === 'active') item.status = 'issued';
       Store.save();
     }
     try{
@@ -756,6 +810,8 @@ const Store = {
     const ent = Store.currentEnterprise();
     if(!user || !ent) return { ok:true };
     if(ent.workspaceType==='personal'){
+      const expiry = Store.personalWorkspaceExpiryState(ent);
+      if(!expiry.ok) return { ok:false, message:expiry.message };
       const quota = Number(ent.aiCallQuota || 0);
       const used = Number(ent.aiCallUsed || 0);
       if(quota > 0 && used >= quota){
@@ -779,6 +835,8 @@ const Store = {
     const ent = Store.currentEnterprise();
     if(!user || !ent) return { ok:true };
     if(ent.workspaceType==='personal'){
+      const expiry = Store.personalWorkspaceExpiryState(ent);
+      if(!expiry.ok) return { ok:false, message:expiry.message };
       const quota = Number(ent.searchQuota || 0);
       const used = Number(ent.searchUsed || 0);
       if(quota > 0 && used >= quota){
@@ -793,6 +851,16 @@ const Store = {
       if(quota > 0 && used >= quota){
         return { ok:false, message:'演示体验联网检索额度已用完。使用邀请码开通个人空间后，可继续使用客户外部情报检索。' };
       }
+    }
+    return { ok:true };
+  },
+
+  checkCustomerCapacity(extra=1){
+    const ent = Store.currentEnterprise();
+    if(!ent || ent.workspaceType!=='personal') return { ok:true };
+    const limit = Number(ent.customerLimit || 0);
+    if(limit > 0 && Store.customers().length + Number(extra||1) > limit){
+      return { ok:false, message:`当前个人版客户容量为 ${limit} 个，已达到上限。请联系发放邀请码的人升级容量。` };
     }
     return { ok:true };
   },

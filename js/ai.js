@@ -788,9 +788,7 @@ const AI = {
             ans=Experts.run(expertId, ctxId);
           }
         }
-        // 构建带提示词框架前缀的回复
-        const promptHeader=`> 已调用 **${ex.name}专家** 智能分析引擎\n> 分析对象：${ctxLabel}\n> 模式：${mode}\n\n---\n\n`;
-        AI.messages[AI.messages.length-1]={role:'bot',content:promptHeader+AI.searchEvidencePrefix()+ans};
+        AI.messages[AI.messages.length-1]={role:'bot',content:AI.searchEvidencePrefix()+ans};
         AI.renderMessages();
         const side=document.getElementById('aiSide');
         if(side)side.innerHTML=AI.renderInsights();
@@ -821,8 +819,7 @@ const AI = {
         if(!ans || ans==='未找到该专家'){
           ans = `> ⚠️ 无法完成分析。请配置AI大模型以获得智能回复，或指定具体的分析对象后重试。`;
         }
-        const header = `> 已调用 **${ex.name}专家** 智能分析引擎\n> 模式：通用分析（未指定具体对象）\n\n---\n\n`;
-        AI.messages[AI.messages.length-1] = {role:'bot', content: header + AI.searchEvidencePrefix() + ans};
+        AI.messages[AI.messages.length-1] = {role:'bot', content: AI.searchEvidencePrefix() + ans};
         AI.renderMessages();
         const side = document.getElementById('aiSide');
         if(side) side.innerHTML = AI.renderInsights();
@@ -903,8 +900,7 @@ const AI = {
         if(!ans||ans==='未找到该专家'){
           ans=`> ⚠️ 无法完成分析。请配置AI大模型以获得智能回复，或指定具体的分析对象后重试。`;
         }
-        const header=`> 已调用 **${ex2.name}专家** 智能分析引擎\n> 模式：通用分析（未指定具体对象）\n\n---\n\n`;
-        AI.messages[AI.messages.length-1]={role:'bot',content:header+AI.searchEvidencePrefix()+ans};
+        AI.messages[AI.messages.length-1]={role:'bot',content:AI.searchEvidencePrefix()+ans};
         AI.renderMessages();
         const side=document.getElementById('aiSide');
         if(side)side.innerHTML=AI.renderInsights();

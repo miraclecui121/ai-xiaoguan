@@ -394,8 +394,8 @@ const App = {
       const totalTokens = aiCalls.reduce((sum,e)=>sum+Number(e.tokens||0),0);
       const names = activations.map(a=>a.userName).filter(Boolean).slice(0,3).join('、') || '—';
       const link = `${origin}${location.pathname}?invite=${encodeURIComponent(code.code)}&src=${encodeURIComponent(code.sourceChannel||'')}&campaign=${encodeURIComponent(code.campaignName||'')}`;
-      const statusText = code.status==='active' ? '启用' : '停用';
-      const statusCls = code.status==='active' ? 'badge-green' : 'badge-gray';
+      const statusText = code.status==='disabled' ? '停用' : (code.status==='activated' ? '已激活' : (code.status==='issued' ? '已发放' : '启用'));
+      const statusCls = code.status==='disabled' ? 'badge-gray' : (code.status==='activated' ? 'badge-green' : (code.status==='issued' ? 'badge-orange' : 'badge-green'));
       return `
         <tr>
           <td><code class="invite-code">${Utils.esc(code.code)}</code></td>
@@ -405,7 +405,7 @@ const App = {
           </td>
           <td>
             <div>${Utils.esc(code.planName||'个人版')}</div>
-            <small>AI ${Number(code.aiCallQuota||0)||'不限'} 次 · 搜索 ${Number(code.searchQuota||0)||'不限'} 次 · 客户 ${Number(code.customerLimit||0)||'不限'}</small>
+            <small>AI ${Number(code.aiCallQuota||0)||'不限'} 次 · 搜索 ${Number(code.searchQuota||0)||'不限'} 次 · 客户 ${Number(code.customerLimit||0)||'不限'} · ${code.expiresAt ? `到期 ${Utils.esc(code.expiresAt)}` : '发放后15天内有效'}</small>
           </td>
           <td>${Number(code.usedCount||0)} / ${Number(code.maxUses||0)||'不限'}</td>
           <td>
@@ -416,7 +416,7 @@ const App = {
           <td><span class="badge ${statusCls}">${statusText}</span></td>
           <td>
             <button class="btn btn-ghost btn-xs" onclick="App.copyInviteLink('${Utils.esc(link)}')">复制链接</button>
-            <button class="btn btn-ghost btn-xs" onclick="App.toggleInviteCode('${Utils.esc(code.code)}')">${code.status==='active'?'停用':'启用'}</button>
+            <button class="btn btn-ghost btn-xs" onclick="App.toggleInviteCode('${Utils.esc(code.code)}')">${code.status==='disabled'?'启用':'停用'}</button>
           </td>
         </tr>`;
     }).join('') : `<tr><td colspan="8" class="empty" style="padding:18px">暂无邀请码</td></tr>`;
@@ -439,12 +439,12 @@ const App = {
         <div class="form-grid-4">
           <div class="form-row"><label class="form-label">权益名称</label><input class="form-input" id="invPlanName" value="个人体验版"></div>
           <div class="form-row"><label class="form-label">每码可用次数</label><input class="form-input" id="invMaxUses" type="number" min="1" value="1"></div>
-          <div class="form-row"><label class="form-label">AI 调用额度</label><input class="form-input" id="invAiQuota" type="number" min="0" value="100"></div>
+          <div class="form-row"><label class="form-label">AI 调用额度</label><input class="form-input" id="invAiQuota" type="number" min="0" value="50"></div>
           <div class="form-row"><label class="form-label">联网检索额度</label><input class="form-input" id="invSearchQuota" type="number" min="0" value="30"></div>
         </div>
         <div class="form-grid-2">
-          <div class="form-row"><label class="form-label">客户容量</label><input class="form-input" id="invCustomerLimit" type="number" min="0" value="100"></div>
-          <div class="form-row"><label class="form-label">到期日期</label><input class="form-input" id="invExpiresAt" type="date" value="2026-12-31"></div>
+          <div class="form-row"><label class="form-label">客户容量</label><input class="form-input" id="invCustomerLimit" type="number" min="0" value="10"></div>
+          <div class="form-row"><label class="form-label">有效期</label><input class="form-input" id="invExpiresAt" type="date" value=""><small class="form-hint">留空表示从发放日期起 15 天内有效</small></div>
         </div>
         <div class="form-row"><label class="form-label">备注</label><input class="form-input" id="invRemark" placeholder="如：直播间赠送、付费体验、老客户内测"></div>
         <button class="btn btn-primary" onclick="App.generateInviteCodesFromForm()">生成邀请码</button>
@@ -615,6 +615,11 @@ const App = {
 
   copyInviteLink(link){
     const text = String(link || '');
+    try{
+      const u = new URL(text, location.origin);
+      const code = (u.searchParams.get('invite') || u.searchParams.get('code') || '').toUpperCase();
+      if(code && Store.reportInviteIssued) Store.reportInviteIssued(code, text);
+    }catch(e){}
     if(navigator.clipboard?.writeText){
       navigator.clipboard.writeText(text).then(()=>Toast.show('邀请链接已复制','success')).catch(()=>Toast.show(text,'info'));
     }else{
@@ -625,7 +630,7 @@ const App = {
   toggleInviteCode(code){
     const item = Store.findInviteCode(code);
     if(!item) return Toast.show('邀请码不存在', 'error');
-    item.status = item.status==='active' ? 'disabled' : 'active';
+    item.status = item.status==='disabled' ? 'active' : 'disabled';
     Store.save();
     if(typeof Audit!=='undefined') Audit.log('invite_code_status_changed', { action:'toggle_invite_code', code, status:item.status });
     App.render();

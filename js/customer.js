@@ -318,7 +318,11 @@ const Customer = {
       uscc: uscc?Utils.USCC.validate(uscc).formatted:'', remark: val('f_remark')
     };
     if(id){ Store.updateCustomer(id,data); Toast.show('客户已更新','success'); }
-    else { const newC = Store.addCustomer(data); data.id = newC.id; Toast.show('客户新建成功','success'); }
+    else {
+      const capacity = Store.checkCustomerCapacity ? Store.checkCustomerCapacity(1) : { ok:true };
+      if(!capacity.ok){ Toast.show(capacity.message, 'warning'); return; }
+      const newC = Store.addCustomer(data); data.id = newC.id; Toast.show('客户新建成功','success');
+    }
     // 发送协同通知
     const mentionedIds = Utils.Mention.getSelected('custForm');
     if(mentionedIds.length){
@@ -515,7 +519,7 @@ const Customer = {
     const rows = Customer.parseCSV(text);
     if(rows.length<2){ Toast.show('请粘贴带表头的CSV/表格内容','error'); return; }
     const headers = rows[0].map(h=>String(h||'').trim());
-    let created = 0, skipped = 0, invalid = 0;
+    let created = 0, skipped = 0, invalid = 0, capacitySkipped = 0;
     rows.slice(1).forEach(row=>{
       const data = Customer.normalizeImportRow(headers, row);
       if(!data.name){ invalid++; return; }
@@ -526,11 +530,13 @@ const Customer = {
         if(vr.valid) data.uscc = vr.formatted;
         else data.uscc = '';
       }
+      const capacity = Store.checkCustomerCapacity ? Store.checkCustomerCapacity(1) : { ok:true };
+      if(!capacity.ok){ capacitySkipped++; return; }
       Store.addCustomer(data);
       created++;
     });
     Modal.close();
-    Toast.show(`导入完成：新增 ${created} 条，跳过重复 ${skipped} 条，无效 ${invalid} 条`, 'success');
+    Toast.show(`导入完成：新增 ${created} 条，跳过重复 ${skipped} 条，无效 ${invalid} 条${capacitySkipped ? `，超出容量 ${capacitySkipped} 条` : ''}`, 'success');
     App.navigate('customer');
   },
 

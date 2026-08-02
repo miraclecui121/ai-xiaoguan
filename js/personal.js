@@ -28,11 +28,15 @@ const Personal = {
       const searchQuota = Number(ent.searchQuota||0);
       const searchUsed = Number(ent.searchUsed||0);
       const customerLimit = Number(ent.customerLimit||0);
+      const expiry = Store.personalWorkspaceExpiryState ? Store.personalWorkspaceExpiryState(ent) : { applies:false };
+      const expiryText = expiry.applies
+        ? (expiry.ok ? `使用期限：剩余 ${expiry.daysLeft} 天；` : `使用期限已结束；`)
+        : '';
       return `
       <div class="workspace-banner workspace-banner-personal">
         <div>
           <div class="workspace-banner-title">${Utils.esc(ent.shortName||ent.name)} · 已开通个人版</div>
-          <div class="workspace-banner-desc">个人数据与演示数据已隔离。AI额度：${quota ? `${used}/${quota} 次` : '未限制'}；联网检索：${searchQuota ? `${searchUsed}/${searchQuota} 次` : '未限制'}；客户容量：${customerLimit ? `${Store.customers().length}/${customerLimit}` : '未限制'}。</div>
+          <div class="workspace-banner-desc">个人数据与演示数据已隔离。${expiryText}AI额度：${quota ? `${used}/${quota} 次` : '未限制'}；联网检索：${searchQuota ? `${searchUsed}/${searchQuota} 次` : '未限制'}；客户容量：${customerLimit ? `${Store.customers().length}/${customerLimit}` : '未限制'}。</div>
         </div>
         <div class="workspace-banner-actions">
           <button class="btn btn-ghost btn-sm" onclick="Personal.switchToDemo()">看演示案例</button>
