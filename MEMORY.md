@@ -33,3 +33,4 @@
 - 2026-08-02：AI销冠线上 Web Service 已接入 Render Postgres：代码提交 `a7de8bf` 新增 `pg`、`usage_logs` 自动建表、日志双写和管理员汇总优先查库；Render 环境变量已配置 `DATABASE_URL`，线上 `/api/platform/status` 显示 `logStorage=postgres`。已用 `postgres_online_write_test` 和一次 `customer-insight` 小型 AI 调用验证，管理员汇总返回 `storage.type=postgres`、`aiUsage=1`、`questions=1`、`users=1`、`customers=1`，证明真实访问/使用日志可持久化查询。
 - 2026-08-02：修复日志客户名抽取：除完整公司/集团/科技等后缀名外，新增“拜访/跟进/会见/分析 + 客户简称 + 这个客户/标点边界”的识别，并过滤专家、总经理、产品、workbuddy 等非客户词。线上用“我要去拜访昆明花易宝这个客户”验证，管理员日志已返回 `customerName=昆明花易宝` 并进入客户汇总。
 - 2026-08-02：修复微信 H5 手机端错位：移动端顶部栏改为两行布局，隐藏左侧桌面菜单和冗余企业/退出文字，搜索框独占第二行；AI 助手页标题改为结构化文本+状态标签，避免中文标题被 flex 压成单字竖排。本地用 390px/360px 微信 UA 验证看板页和 AI 页 `docScrollWidth/bodyScrollWidth` 均等于视口宽度，无横向溢出。
+- 2026-08-02：线上 H5 巡检发现客户/联系人/商机/公海/漏斗等宽表虽未撑破整页，但在手机卡片内存在右侧字段裁切；日程看板横向多列也不适合微信 H5。移动端已为 `.table-wrap` 增加明确横向滑动区和提示，表格单元格收紧为单行；`.kanban` 在手机端统一改为单列。复测客户、日程、漏斗、AI 页 `docScrollWidth/bodyScrollWidth` 均等于 360。
