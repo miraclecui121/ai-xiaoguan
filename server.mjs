@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import QRCode from "qrcode";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ENV_PATH = path.join(ROOT, ".env.local");
@@ -17,8 +18,10 @@ const MAX_MESSAGES = 16;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX = 40;
 const WECHAT_STATE_TTL_MS = 10 * 60 * 1000;
+const WECHAT_QR_TTL_MS = 5 * 60 * 1000;
 const WECHAT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const rateBuckets = new Map();
+const wechatQrSessions = new Map();
 const expertSoulCache = new Map();
 let pgPool = null;
 let pgInitPromise = null;
@@ -190,6 +193,14 @@ const server = createServer(async (req, res) => {
       return handleWechatStart(req, res, url);
     }
 
+    if (url.pathname === "/api/auth/wechat/qr/start" && req.method === "GET") {
+      return handleWechatQrStart(req, res, url);
+    }
+
+    if (url.pathname === "/api/auth/wechat/qr/status" && req.method === "GET") {
+      return handleWechatQrStatus(req, res, url);
+    }
+
     if (url.pathname === "/api/auth/wechat/callback" && req.method === "GET") {
       return handleWechatCallback(req, res, url);
     }
@@ -271,15 +282,7 @@ async function handleWechatStart(req, res, url) {
     returnTo,
   };
   const state = signWechatState(acquisition);
-  const authorize = new URL(config.wechatOAuthMode === "open"
-    ? "https://open.weixin.qq.com/connect/qrconnect"
-    : "https://open.weixin.qq.com/connect/oauth2/authorize");
-  authorize.searchParams.set("appid", config.wechatAppId);
-  authorize.searchParams.set("redirect_uri", callbackUrl);
-  authorize.searchParams.set("response_type", "code");
-  authorize.searchParams.set("scope", getWechatScope());
-  authorize.searchParams.set("state", state);
-  const location = `${authorize.toString()}#wechat_redirect`;
+  const location = buildWechatAuthorizeUrl(callbackUrl, state);
   await writeLog("audit", req, {
     event: "wechat_oauth_start",
     action: "wechat_oauth_start",
@@ -288,6 +291,116 @@ async function handleWechatStart(req, res, url) {
     campaignName: acquisition.campaignName,
   });
   redirect(res, location);
+}
+
+async function handleWechatQrStart(req, res, url) {
+  if (!isWechatConfigured()) {
+    await writeLog("audit", req, { event: "wechat_qr_unconfigured", action: "wechat_qr_start" });
+    return sendJson(res, 503, { success: false, error: "wechat_oauth_not_configured" });
+  }
+  if (!checkRateLimit(`wechat-qr-start:${clientKey(req)}`)) {
+    await writeLog("security", req, { event: "rate_limited", path: req.url || "" });
+    return sendJson(res, 429, { success: false, error: "rate_limited" });
+  }
+
+  cleanupWechatQrSessions();
+  const baseUrl = publicBaseUrl(req);
+  const callbackUrl = `${baseUrl}/api/auth/wechat/callback`;
+  const qrId = crypto.randomBytes(16).toString("hex");
+  const pollToken = crypto.randomBytes(24).toString("base64url");
+  const pollHash = hashId(pollToken);
+  const returnTo = sanitizeReturnTo(url.searchParams.get("return_to") || "/");
+  const acquisition = {
+    inviteCode: sanitizeShortParam(url.searchParams.get("invite")),
+    sourceChannel: sanitizeShortParam(url.searchParams.get("src")),
+    campaignName: sanitizeShortParam(url.searchParams.get("campaign")),
+    returnTo,
+    loginChannel: "pc_qr",
+    qrId,
+    pollHash,
+  };
+  const state = signWechatState(acquisition);
+  const authUrl = buildWechatAuthorizeUrl(callbackUrl, state);
+  const qrSvg = await QRCode.toString(authUrl, {
+    type: "svg",
+    margin: 1,
+    width: 230,
+    color: { dark: "#073f3a", light: "#ffffff" },
+  });
+  wechatQrSessions.set(qrId, {
+    pollHash,
+    status: "pending",
+    acquisition,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + WECHAT_QR_TTL_MS,
+    session: null,
+  });
+  await writeLog("audit", req, {
+    event: "wechat_qr_start",
+    action: "wechat_qr_start",
+    result: "success",
+    sourceChannel: acquisition.sourceChannel,
+    campaignName: acquisition.campaignName,
+  });
+  return sendJson(res, 200, {
+    success: true,
+    data: {
+      qrId,
+      pollToken,
+      qrSvg,
+      expiresIn: Math.floor(WECHAT_QR_TTL_MS / 1000),
+    },
+  });
+}
+
+async function handleWechatQrStatus(req, res, url) {
+  if (!isAllowedOrigin(req)) {
+    await writeLog("security", req, { event: "origin_forbidden", path: req.url || "" });
+    return sendJson(res, 403, { success: false, error: "origin_forbidden" });
+  }
+  cleanupWechatQrSessions();
+  const qrId = String(url.searchParams.get("qr_id") || "").replace(/[^a-f0-9]/gi, "").slice(0, 64);
+  const pollToken = String(url.searchParams.get("poll_token") || "").trim();
+  const item = qrId ? wechatQrSessions.get(qrId) : null;
+  if (!item || Date.now() > item.expiresAt) {
+    if (item) wechatQrSessions.delete(qrId);
+    return sendJson(res, 200, { success: true, data: { status: "expired" } });
+  }
+  if (!pollToken || hashId(pollToken) !== item.pollHash) {
+    await writeLog("security", req, { event: "wechat_qr_bad_poll_token", action: "wechat_qr_status" });
+    return sendJson(res, 403, { success: false, error: "forbidden" });
+  }
+  if (item.status !== "confirmed" || !item.session) {
+    return sendJson(res, 200, { success: true, data: { status: item.status || "pending" } });
+  }
+  setWechatSessionCookie(res, req, item.session);
+  wechatQrSessions.delete(qrId);
+  await writeLog("audit", req, {
+    event: "wechat_qr_login_success",
+    action: "wechat_qr_status",
+    result: "success",
+    user: { userName: item.session.nickname, account: `wx_${hashId(item.session.unionid || item.session.openid).slice(0, 10)}` },
+  });
+  return sendJson(res, 200, {
+    success: true,
+    data: {
+      status: "confirmed",
+      authenticated: true,
+      user: sanitizeWechatSession(item.session),
+    },
+  });
+}
+
+function buildWechatAuthorizeUrl(callbackUrl, state) {
+  const authorize = new URL(config.wechatOAuthMode === "open"
+    ? "https://open.weixin.qq.com/connect/qrconnect"
+    : "https://open.weixin.qq.com/connect/oauth2/authorize");
+  authorize.searchParams.set("appid", config.wechatAppId);
+  authorize.searchParams.set("redirect_uri", callbackUrl);
+  authorize.searchParams.set("response_type", "code");
+  authorize.searchParams.set("scope", getWechatScope());
+  authorize.searchParams.set("state", state);
+  return `${authorize.toString()}#wechat_redirect`;
 }
 
 async function handleWechatCallback(req, res, url) {
@@ -360,6 +473,25 @@ async function handleWechatCallback(req, res, url) {
       inviteCode: state.inviteCode || "",
       loginAt: new Date().toISOString(),
     };
+    if (state.loginChannel === "pc_qr" && state.qrId) {
+      const qrSession = wechatQrSessions.get(state.qrId);
+      if (!qrSession || qrSession.pollHash !== state.pollHash || Date.now() > qrSession.expiresAt) {
+        await writeLog("security", req, { event: "wechat_qr_invalid_or_expired", action: "wechat_oauth_callback" });
+        return sendWechatCallbackHtml(res, "授权已过期", "请回到电脑浏览器重新点击微信扫码登录。", false);
+      }
+      qrSession.status = "confirmed";
+      qrSession.session = session;
+      qrSession.confirmedAt = Date.now();
+      qrSession.expiresAt = Date.now() + 2 * 60 * 1000;
+      wechatQrSessions.set(state.qrId, qrSession);
+      await writeLog("audit", req, {
+        event: "wechat_qr_callback_success",
+        action: "wechat_oauth_callback",
+        result: "success",
+        user: { userName: session.nickname, account: `wx_${hashId(profile.unionid || profile.openid).slice(0, 10)}` },
+      });
+      return sendWechatCallbackHtml(res, "微信授权成功", "请回到电脑浏览器，页面会自动进入 AI销冠。", true);
+    }
     setWechatSessionCookie(res, req, session);
     await writeLog("audit", req, {
       event: "wechat_oauth_login_success",
@@ -1017,7 +1149,17 @@ function verifyWechatState(stateText) {
     sourceChannel: sanitizeShortParam(payload.sourceChannel),
     campaignName: sanitizeShortParam(payload.campaignName),
     returnTo: sanitizeReturnTo(payload.returnTo || "/"),
+    loginChannel: sanitizeShortParam(payload.loginChannel),
+    qrId: String(payload.qrId || "").replace(/[^a-f0-9]/gi, "").slice(0, 64),
+    pollHash: String(payload.pollHash || "").replace(/[^a-f0-9]/gi, "").slice(0, 64),
   };
+}
+
+function cleanupWechatQrSessions() {
+  const now = Date.now();
+  for (const [key, item] of wechatQrSessions.entries()) {
+    if (!item || now > Number(item.expiresAt || 0)) wechatQrSessions.delete(key);
+  }
 }
 
 function signPayload(payload) {
@@ -1201,6 +1343,46 @@ function redirect(res, location) {
     "Cache-Control": "no-store",
   });
   res.end();
+}
+
+function sendWechatCallbackHtml(res, title, message, ok = true) {
+  const accent = ok ? "#0f766e" : "#b42318";
+  const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f8f7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#14213d}
+    .box{width:min(86vw,420px);background:#fff;border-radius:18px;padding:28px 22px;text-align:center;box-shadow:0 20px 50px rgba(15,25,45,.12)}
+    .mark{width:54px;height:54px;border-radius:18px;background:${accent};color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;margin-bottom:18px}
+    h1{font-size:22px;margin:0 0 10px}
+    p{font-size:15px;line-height:1.7;color:#56637a;margin:0}
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="mark">${ok ? "✓" : "!"}</div>
+    <h1>${escapeHtml(title)}</h1>
+    <p>${escapeHtml(message)}</p>
+  </div>
+</body>
+</html>`;
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  res.end(html);
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 async function fetchWithRetry(url, options, attempts = 3) {

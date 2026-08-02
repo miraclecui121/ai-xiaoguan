@@ -2,6 +2,8 @@
 /* 多租户登录/注销/企业注册/路由守卫
    双模式：API 模式（后端 JWT）或本地模式（localStorage session）*/
 const Auth = {
+  wechatQrTimer: null,
+
   // 检查登录状态，未登录则显示登录页
   check(){
     Store.initSession();
@@ -205,11 +207,21 @@ const Auth = {
   },
 
   wechatLoginHint(){
-    return Auth.isLocalHost() ? '本机未配置时自动使用模拟授权' : 'PC扫码或微信内授权，跨端使用同一空间';
+    return Auth.isLocalHost() ? '本机未配置时自动使用模拟授权' : '电脑浏览器扫码登录，微信内直接授权';
   },
 
   isLocalHost(){
     return ['localhost','127.0.0.1','::1'].includes(location.hostname) || location.protocol === 'file:';
+  },
+
+  isWechatBrowser(){
+    return /MicroMessenger/i.test(navigator.userAgent || '');
+  },
+
+  shouldUseWechatQrLogin(){
+    if(Auth.isLocalHost()) return false;
+    if(Auth.isWechatBrowser()) return false;
+    return window.matchMedia ? window.matchMedia('(min-width: 760px)').matches : window.innerWidth >= 760;
   },
 
   async restoreWechatOAuthSession(){
@@ -254,6 +266,10 @@ const Auth = {
         if(acq.sourceChannel) qs.set('src', acq.sourceChannel);
         if(acq.campaignName) qs.set('campaign', acq.campaignName);
         qs.set('return_to', returnTo || '/');
+        if(Auth.shouldUseWechatQrLogin()){
+          await Auth.openWechatQrLogin(qs);
+          return;
+        }
         location.href = `/api/auth/wechat/start?${qs.toString()}`;
         return;
       }
@@ -271,6 +287,79 @@ const Auth = {
         Toast.show(e.message || '微信授权登录失败', 'error');
       }
     }
+  },
+
+  async openWechatQrLogin(qs){
+    Auth.cancelWechatQrLogin(false);
+    const resp = await fetch(`/api/auth/wechat/qr/start?${qs.toString()}`, { credentials:'include' });
+    const data = await resp.json().catch(()=>null);
+    if(!resp.ok || !data?.success || !data?.data?.qrId){
+      throw new Error(data?.error || data?.message || '微信扫码登录初始化失败');
+    }
+    const qr = data.data;
+    Modal.open({
+      title: '微信扫码登录',
+      size: 'sm',
+      body: `
+        <div class="wechat-qr-login" id="wechatQrLoginBox">
+          <div class="wechat-qr-img">${qr.qrSvg || ''}</div>
+          <div class="wechat-qr-title">请使用手机微信扫码授权</div>
+          <div class="wechat-qr-desc">扫码后在手机上确认授权，电脑端会自动登录。二维码约 ${Math.max(1, Math.floor((qr.expiresIn||300)/60))} 分钟内有效。</div>
+          <div class="wechat-qr-status" id="wechatQrStatus">等待扫码确认...</div>
+        </div>`,
+      footer: `<button class="btn btn-ghost" onclick="Auth.cancelWechatQrLogin(true)">取消</button>`
+    });
+    Auth.wechatQrTimer = setInterval(()=>Auth.pollWechatQrLogin(qr.qrId, qr.pollToken), 1800);
+    await Auth.pollWechatQrLogin(qr.qrId, qr.pollToken);
+  },
+
+  async pollWechatQrLogin(qrId, pollToken){
+    const mask = document.getElementById('modalMask');
+    if(mask && !mask.classList.contains('show')){
+      Auth.cancelWechatQrLogin(false);
+      return;
+    }
+    const statusEl = document.getElementById('wechatQrStatus');
+    try{
+      const qs = new URLSearchParams({ qr_id: qrId, poll_token: pollToken });
+      const resp = await fetch(`/api/auth/wechat/qr/status?${qs.toString()}`, { credentials:'include' });
+      const data = await resp.json().catch(()=>null);
+      if(!resp.ok || !data?.success) throw new Error(data?.error || '扫码状态查询失败');
+      const status = data.data?.status || 'pending';
+      if(status === 'expired'){
+        Auth.cancelWechatQrLogin(false);
+        if(statusEl) statusEl.textContent = '二维码已过期，请重新点击微信登录。';
+        Toast.show('二维码已过期，请重新点击微信登录', 'error');
+        return;
+      }
+      if(status !== 'confirmed'){
+        if(statusEl) statusEl.textContent = '等待扫码确认...';
+        return;
+      }
+      Auth.cancelWechatQrLogin(false);
+      const profile = data.data?.user;
+      if(!profile) throw new Error('微信授权信息缺失');
+      const user = Store.loginWithWechatOAuth(profile);
+      if(Store.restoreCloudWorkspace){
+        const cloud = await Store.restoreCloudWorkspace(profile);
+        if(cloud?.restored) Toast.show('已同步你的个人空间和历史数据', 'success');
+      }
+      if(typeof Audit!=='undefined') Audit.log('wechat_qr_login_success', { action:'wechat_qr_login', result:'success' });
+      Modal.close();
+      Auth.showApp();
+      App.navigate('ai');
+      Toast.show(`已通过微信登录，${user.name}`, 'success');
+    }catch(e){
+      if(statusEl) statusEl.textContent = e.message || '扫码登录失败，请重试。';
+    }
+  },
+
+  cancelWechatQrLogin(closeModal=true){
+    if(Auth.wechatQrTimer){
+      clearInterval(Auth.wechatQrTimer);
+      Auth.wechatQrTimer = null;
+    }
+    if(closeModal) Modal.close();
   },
 
   loginWithWechatDemo(){
