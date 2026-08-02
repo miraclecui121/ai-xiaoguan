@@ -4,6 +4,9 @@ const AI = {
   lastLLMError: null,
   lastSearchEvidence: null,
   autoSearch: true,
+  _cloudLoadedKey: '',
+  _cloudLoading: false,
+  _cloudSyncTimer: null,
 
   // ===== @提及与上下文选择系统 =====
   // 上下文状态：用户通过@提及选择的客户/商机/专家
@@ -101,6 +104,64 @@ const AI = {
     try{
       localStorage.setItem(key, JSON.stringify({ updatedAt:Utils.now(), messages }));
     }catch(e){}
+    AI.queueCloudConversationSync(messages);
+  },
+
+  cloudConversationKey(){
+    if(typeof Store==='undefined' || !Store.cloudConversationThreadKey) return '';
+    return Store.cloudConversationThreadKey();
+  },
+
+  canCloudPersistConversation(){
+    return AI.canPersistConversation() && typeof Store!=='undefined' && Store.canCloudSync && Store.canCloudSync();
+  },
+
+  async loadCloudConversation(){
+    if(!AI.canCloudPersistConversation() || AI._cloudLoading) return;
+    const threadKey = AI.cloudConversationKey();
+    if(!threadKey || AI._cloudLoadedKey === threadKey) return;
+    AI._cloudLoading = true;
+    try{
+      const resp = await fetch(`/api/cloud/conversation?thread_key=${encodeURIComponent(threadKey)}`, { credentials:'include', cache:'no-store' });
+      const data = await resp.json().catch(()=>null);
+      if(resp.ok && data?.success && data.data?.exists && Array.isArray(data.data.messages) && data.data.messages.length){
+        AI.messages = data.data.messages
+          .filter(m=>['user','bot'].includes(m?.role) && String(m.content||'').trim())
+          .slice(-60)
+          .map(m=>({ role:m.role, content:String(m.content||'').slice(0,6000) }));
+        AI._cloudLoadedKey = threadKey;
+        AI.saveConversation();
+        AI.renderMessages();
+      }else{
+        AI._cloudLoadedKey = threadKey;
+      }
+    }catch(e){
+      console.warn('[cloud] conversation restore failed:', e.message);
+    }finally{
+      AI._cloudLoading = false;
+    }
+  },
+
+  queueCloudConversationSync(messages){
+    if(!AI.canCloudPersistConversation() || AI._cloudLoading) return;
+    clearTimeout(AI._cloudSyncTimer);
+    AI._cloudSyncTimer = setTimeout(()=>AI.flushCloudConversation(messages), 900);
+  },
+
+  async flushCloudConversation(messages){
+    if(!AI.canCloudPersistConversation()) return;
+    const threadKey = AI.cloudConversationKey();
+    if(!threadKey) return;
+    try{
+      await fetch('/api/cloud/conversation', {
+        method:'PUT',
+        credentials:'include',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ threadKey, messages }),
+      });
+    }catch(e){
+      console.warn('[cloud] conversation sync failed:', e.message);
+    }
   },
 
   clearRuntimeState(){
@@ -110,6 +171,7 @@ const AI = {
     AI.lastLLMError = null;
     AI.lastSearchEvidence = null;
     AI._loadedConversationKey = '';
+    AI._cloudLoadedKey = '';
   },
 
   // 打开@提及弹窗（直接DOM操作，不调用App.render）
@@ -365,6 +427,9 @@ const AI = {
     // 初始化欢迎语
     if(!AI.messages.length){
       AI.messages.push({role:'bot', content:AI.welcome()});
+    }
+    if(AI.canCloudPersistConversation()){
+      setTimeout(()=>AI.loadCloudConversation(), 0);
     }
     // 渲染后初始化消息列表和提及弹窗
     setTimeout(()=>{

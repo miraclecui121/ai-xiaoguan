@@ -11,6 +11,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ENV_PATH = path.join(ROOT, ".env.local");
 const LOG_DIR = path.join(ROOT, "logs");
 const MAX_BODY_BYTES = 320 * 1024;
+const MAX_CLOUD_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_MESSAGE_CHARS = 24000;
 const MAX_MESSAGES = 16;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
@@ -85,6 +86,27 @@ CREATE INDEX IF NOT EXISTS usage_logs_kind_ts_idx ON usage_logs (kind, ts DESC);
 CREATE INDEX IF NOT EXISTS usage_logs_account_ts_idx ON usage_logs (account, ts DESC);
 CREATE INDEX IF NOT EXISTS usage_logs_expert_ts_idx ON usage_logs (expert_id, ts DESC);
 CREATE INDEX IF NOT EXISTS usage_logs_invite_ts_idx ON usage_logs (invite_code, ts DESC);
+
+CREATE TABLE IF NOT EXISTS user_workspaces (
+  external_id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL DEFAULT 'wechat_oauth',
+  user_profile JSONB NOT NULL DEFAULT '{}'::jsonb,
+  workspace_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  workspace_version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS user_workspaces_updated_idx ON user_workspaces (updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS conversation_threads (
+  external_id TEXT NOT NULL,
+  thread_key TEXT NOT NULL,
+  messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (external_id, thread_key)
+);
+CREATE INDEX IF NOT EXISTS conversation_threads_updated_idx ON conversation_threads (updated_at DESC);
 `;
 
 const DOUBAO_SEARCH_ENDPOINTS = {
@@ -180,6 +202,14 @@ const server = createServer(async (req, res) => {
       clearWechatSessionCookie(res, req);
       await writeLog("audit", req, { event: "wechat_oauth_logout", action: "wechat_oauth_logout" });
       return sendJson(res, 200, { success: true });
+    }
+
+    if (url.pathname === "/api/cloud/workspace" && ["GET", "PUT"].includes(req.method)) {
+      return handleCloudWorkspace(req, res);
+    }
+
+    if (url.pathname === "/api/cloud/conversation" && ["GET", "PUT"].includes(req.method)) {
+      return handleCloudConversation(req, res, url);
     }
 
     if (url.pathname === "/api/audit/log" && req.method === "POST") {
@@ -366,6 +396,129 @@ async function handleWechatSession(req, res) {
     clearWechatSessionCookie(res, req);
     return sendJson(res, 200, { success: true, data: { authenticated: false, configured: isWechatConfigured() } });
   }
+}
+
+async function handleCloudWorkspace(req, res) {
+  if (!isAllowedOrigin(req)) {
+    await writeLog("security", req, { event: "origin_forbidden", path: req.url || "" });
+    return sendJson(res, 403, { success: false, error: "origin_forbidden" });
+  }
+  const auth = getWechatAuthUser(req);
+  if (!auth) return sendJson(res, 401, { success: false, error: "wechat_auth_required" });
+  const pool = await ensureDatabaseReady();
+  if (!pool) return sendJson(res, 503, { success: false, error: "database_not_configured" });
+
+  if (req.method === "GET") {
+    const result = await pool.query(
+      `SELECT user_profile, workspace_data, workspace_version, updated_at
+         FROM user_workspaces
+        WHERE external_id = $1`,
+      [auth.externalId],
+    );
+    const row = result.rows[0];
+    return sendJson(res, 200, {
+      success: true,
+      data: {
+        exists: Boolean(row),
+        externalId: auth.externalId,
+        profile: row?.user_profile || auth.profile,
+        workspaceData: row?.workspace_data || null,
+        workspaceVersion: row?.workspace_version || 0,
+        updatedAt: row?.updated_at || "",
+      },
+    });
+  }
+
+  const raw = await readBody(req, MAX_CLOUD_BODY_BYTES);
+  let body;
+  try {
+    body = JSON.parse(raw || "{}");
+  } catch {
+    return sendJson(res, 400, { success: false, error: "invalid_json" });
+  }
+  let workspaceData;
+  try {
+    workspaceData = sanitizeWorkspaceData(body.workspaceData || body.workspace || {});
+  } catch (err) {
+    const tooLarge = err.message === "workspace_snapshot_too_large";
+    return sendJson(res, tooLarge ? 413 : 400, { success: false, error: err.message || "invalid_workspace_data" });
+  }
+  const workspaceVersion = clampNumber(body.workspaceVersion, 1, 999999999, 1);
+  await pool.query(
+    `INSERT INTO user_workspaces (
+      external_id, provider, user_profile, workspace_data, workspace_version, updated_at
+    ) VALUES ($1, 'wechat_oauth', $2, $3, $4, NOW())
+    ON CONFLICT (external_id) DO UPDATE SET
+      user_profile = EXCLUDED.user_profile,
+      workspace_data = EXCLUDED.workspace_data,
+      workspace_version = GREATEST(user_workspaces.workspace_version + 1, EXCLUDED.workspace_version),
+      updated_at = NOW()`,
+    [auth.externalId, JSON.stringify(auth.profile), JSON.stringify(workspaceData), workspaceVersion],
+  );
+  await writeLog("audit", req, {
+    event: "cloud_workspace_sync",
+    action: "cloud_workspace_sync",
+    result: "success",
+    user: {
+      userName: auth.profile.nickname,
+      account: auth.externalId,
+      sourceChannel: auth.profile.sourceChannel,
+      campaignName: auth.profile.campaignName,
+      inviteCode: auth.profile.inviteCode,
+    },
+  });
+  return sendJson(res, 200, { success: true, data: { externalId: auth.externalId, syncedAt: new Date().toISOString() } });
+}
+
+async function handleCloudConversation(req, res, url) {
+  if (!isAllowedOrigin(req)) {
+    await writeLog("security", req, { event: "origin_forbidden", path: req.url || "" });
+    return sendJson(res, 403, { success: false, error: "origin_forbidden" });
+  }
+  const auth = getWechatAuthUser(req);
+  if (!auth) return sendJson(res, 401, { success: false, error: "wechat_auth_required" });
+  const pool = await ensureDatabaseReady();
+  if (!pool) return sendJson(res, 503, { success: false, error: "database_not_configured" });
+
+  if (req.method === "GET") {
+    const threadKey = sanitizeThreadKey(url.searchParams.get("thread_key") || url.searchParams.get("threadKey") || "main");
+    const result = await pool.query(
+      `SELECT messages, updated_at
+         FROM conversation_threads
+        WHERE external_id = $1 AND thread_key = $2`,
+      [auth.externalId, threadKey],
+    );
+    const row = result.rows[0];
+    return sendJson(res, 200, {
+      success: true,
+      data: {
+        exists: Boolean(row),
+        threadKey,
+        messages: Array.isArray(row?.messages) ? row.messages : [],
+        updatedAt: row?.updated_at || "",
+      },
+    });
+  }
+
+  const raw = await readBody(req, MAX_CLOUD_BODY_BYTES);
+  let body;
+  try {
+    body = JSON.parse(raw || "{}");
+  } catch {
+    return sendJson(res, 400, { success: false, error: "invalid_json" });
+  }
+  const threadKey = sanitizeThreadKey(body.threadKey || body.thread_key || "main");
+  const messages = sanitizeCloudMessages(body.messages);
+  await pool.query(
+    `INSERT INTO conversation_threads (
+      external_id, thread_key, messages, updated_at
+    ) VALUES ($1, $2, $3, NOW())
+    ON CONFLICT (external_id, thread_key) DO UPDATE SET
+      messages = EXCLUDED.messages,
+      updated_at = NOW()`,
+    [auth.externalId, threadKey, JSON.stringify(messages)],
+  );
+  return sendJson(res, 200, { success: true, data: { threadKey, count: messages.length, syncedAt: new Date().toISOString() } });
 }
 
 async function handlePlatformChat(req, res) {
@@ -936,6 +1089,92 @@ function sanitizeWechatSession(session) {
     inviteCode: sanitizeShortParam(session.inviteCode || ""),
     loginAt: String(session.loginAt || ""),
   };
+}
+
+function getWechatAuthUser(req) {
+  const raw = getCookie(req, "aixg_wechat_session");
+  if (!raw) return null;
+  try {
+    const session = verifySignedPayload(raw, WECHAT_SESSION_TTL_MS);
+    const profile = sanitizeWechatSession(session);
+    if (!profile.externalId || profile.externalId.endsWith("_")) return null;
+    return { externalId: profile.externalId, profile };
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeThreadKey(value) {
+  return String(value || "main")
+    .replace(/[^A-Za-z0-9:_-]/g, "_")
+    .slice(0, 120) || "main";
+}
+
+function sanitizeCloudMessages(input) {
+  if (!Array.isArray(input)) return [];
+  const allowed = new Set(["user", "bot"]);
+  return input
+    .filter((m) => allowed.has(m?.role) && String(m.content || "").trim())
+    .slice(-60)
+    .map((m) => ({
+      role: m.role,
+      content: sanitizeCloudValue(String(m.content || "").slice(0, 6000)),
+      ts: String(m.ts || "").slice(0, 40),
+    }));
+}
+
+function sanitizeWorkspaceData(input) {
+  const src = input && typeof input === "object" ? input : {};
+  const out = {};
+  [
+    "enterprises", "orgUnits", "users", "customers", "contacts", "opportunities",
+    "followups", "schedules", "notifications",
+  ].forEach((name) => {
+    if (Array.isArray(src[name])) {
+      out[name] = src[name].slice(0, 3000).map((item) => sanitizeCloudValue(item));
+    }
+  });
+  out.settings = sanitizeWorkspaceSettings(src.settings || {});
+  out.cloudSyncedAt = new Date().toISOString();
+  const json = JSON.stringify(out);
+  if (Buffer.byteLength(json, "utf8") > MAX_CLOUD_BODY_BYTES) {
+    throw new Error("workspace_snapshot_too_large");
+  }
+  return out;
+}
+
+function sanitizeWorkspaceSettings(settings) {
+  const src = settings && typeof settings === "object" ? settings : {};
+  const out = sanitizeCloudValue(src);
+  delete out.inviteCodes;
+  delete out.inviteActivations;
+  if (out.aiModels?.providers && Array.isArray(out.aiModels.providers)) {
+    out.aiModels.providers = out.aiModels.providers.map((provider) => ({
+      ...provider,
+      apiKey: "",
+    }));
+  }
+  return out;
+}
+
+function sanitizeCloudValue(value, depth = 0) {
+  if (depth > 8) return null;
+  if (value === null || value === undefined) return value;
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value === "string") return redactText(value).slice(0, 12000);
+  if (Array.isArray(value)) return value.slice(0, 500).map((item) => sanitizeCloudValue(item, depth + 1));
+  if (typeof value === "object") {
+    const out = {};
+    Object.entries(value).slice(0, 200).forEach(([key, item]) => {
+      if (/apiKey|password|token|secret|authorization|cookie/i.test(key)) {
+        out[key] = "";
+        return;
+      }
+      out[key] = sanitizeCloudValue(item, depth + 1);
+    });
+    return out;
+  }
+  return null;
 }
 
 function hashId(value) {

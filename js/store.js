@@ -18,6 +18,8 @@ const Store = {
   session: { enterpriseId: null, userId: null, loginAt: null },
   // 当前模式：'api' 或 'local'，由 init() 检测后设定
   mode: 'local',
+  cloud: { enabled:false, externalId:'', restored:false, syncTimer:null, syncing:false },
+  _applyingCloud: false,
 
   // 集合名 → API 路径映射（API 模式下 CRUD 自动调用）
   API_PATHS: {
@@ -183,6 +185,134 @@ const Store = {
     return Store.dateOnlyAfterDays(item.issuedAt || item.createdAt || Utils.now(), Store.PERSONAL_TRIAL_INVITE_DAYS);
   },
 
+  cloudExternalId(){
+    const user = Store.currentUser();
+    return user?.identityProvider === 'wechat_oauth' && user.externalId ? user.externalId : (Store.cloud.externalId || '');
+  },
+  canCloudSync(){
+    const user = Store.currentUser();
+    return Store.cloud.enabled &&
+      user?.identityProvider === 'wechat_oauth' &&
+      !!user.externalId &&
+      Store.isPersonalWorkspace();
+  },
+  cloudConversationThreadKey(){
+    const ent = Store.currentEnterprise();
+    const type = ent?.workspaceType || 'workspace';
+    return `${type}:${Store.session.enterpriseId || 'default'}`;
+  },
+  async restoreCloudWorkspace(profile={}){
+    const externalId = String(profile.externalId || '').trim();
+    if(!externalId || typeof fetch==='undefined') return { ok:false, reason:'missing_external_id' };
+    Store.cloud.enabled = true;
+    Store.cloud.externalId = externalId;
+    try{
+      const resp = await fetch('/api/cloud/workspace', { credentials:'include', cache:'no-store' });
+      const data = await resp.json().catch(()=>null);
+      if(!resp.ok || !data?.success) return { ok:false, reason:data?.error || `http_${resp.status}` };
+      if(data.data?.exists && data.data.workspaceData){
+        Store.applyCloudWorkspace(data.data.workspaceData, profile);
+        Store.cloud.restored = true;
+        return { ok:true, restored:true, updatedAt:data.data.updatedAt || '' };
+      }
+      Store.cloud.restored = true;
+      Store.queueCloudSync('init-empty-cloud');
+      return { ok:true, restored:false };
+    }catch(e){
+      console.warn('[cloud] restore failed:', e.message);
+      return { ok:false, reason:e.message || 'restore_failed' };
+    }
+  },
+  applyCloudWorkspace(workspaceData, profile={}){
+    const base = Seed.build();
+    const localSettings = Store.db?.settings || {};
+    const cloud = workspaceData && typeof workspaceData==='object' ? workspaceData : {};
+    Store._applyingCloud = true;
+    try{
+      Store.db = base;
+      ['enterprises','orgUnits','users','customers','contacts','opportunities','followups','schedules','notifications'].forEach(name=>{
+        if(Array.isArray(cloud[name])) Store.db[name] = cloud[name];
+      });
+      Store.db.settings = {
+        ...base.settings,
+        ...(cloud.settings || {}),
+        inviteCodes: localSettings.inviteCodes || base.settings.inviteCodes || [],
+        inviteActivations: localSettings.inviteActivations || [],
+      };
+      Store.ensureWorkspaceDefaults();
+      const externalId = String(profile.externalId || Store.cloud.externalId || '').trim();
+      const candidates = Store.collection('users').filter(u=>u.identityProvider==='wechat_oauth' && u.externalId===externalId);
+      const personal = candidates.find(u=>Store.get('enterprises', u.enterpriseId)?.workspaceType==='personal');
+      const target = personal || candidates.find(u=>u.enterpriseId==='ent_001') || candidates[0];
+      if(target){
+        Store.session = {
+          enterpriseId: target.enterpriseId,
+          userId: target.id,
+          loginAt: Utils.now(),
+          authProvider:'wechat_oauth',
+        };
+        Store.saveSession();
+      }
+      localStorage.setItem(Store.KEY, JSON.stringify(Store.db));
+    }finally{
+      Store._applyingCloud = false;
+    }
+  },
+  cloudWorkspaceSnapshot(){
+    const clone = JSON.parse(JSON.stringify(Store.db || {}));
+    const scrub = (value)=>{
+      if(Array.isArray(value)) return value.map(scrub);
+      if(value && typeof value==='object'){
+        Object.keys(value).forEach(key=>{
+          if(/apiKey|password|token|secret|authorization|cookie/i.test(key)){
+            value[key] = '';
+          }else{
+            value[key] = scrub(value[key]);
+          }
+        });
+      }
+      return value;
+    };
+    scrub(clone);
+    if(clone.settings){
+      delete clone.settings.inviteCodes;
+      delete clone.settings.inviteActivations;
+      if(clone.settings.aiModels?.providers){
+        clone.settings.aiModels.providers.forEach(p=>{ p.apiKey=''; });
+      }
+    }
+    return clone;
+  },
+  queueCloudSync(reason='change'){
+    if(Store._applyingCloud || !Store.canCloudSync()) return;
+    clearTimeout(Store.cloud.syncTimer);
+    Store.cloud.syncTimer = setTimeout(()=>Store.flushCloudWorkspace(reason), 1200);
+  },
+  async flushCloudWorkspace(reason='change'){
+    if(Store.cloud.syncing || !Store.canCloudSync()) return { ok:false, reason:'not_ready' };
+    Store.cloud.syncing = true;
+    try{
+      const resp = await fetch('/api/cloud/workspace', {
+        method:'PUT',
+        credentials:'include',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          workspaceVersion: Date.now(),
+          reason,
+          workspaceData: Store.cloudWorkspaceSnapshot(),
+        }),
+      });
+      const data = await resp.json().catch(()=>null);
+      if(!resp.ok || !data?.success) throw new Error(data?.error || `http_${resp.status}`);
+      return { ok:true };
+    }catch(e){
+      console.warn('[cloud] workspace sync failed:', e.message);
+      return { ok:false, reason:e.message || 'sync_failed' };
+    }finally{
+      Store.cloud.syncing = false;
+    }
+  },
+
   normalizePersonalTrialBenefits(){
     if(!Store.db?.enterprises) return;
     const inviteMap = new Map((Store.db.settings?.inviteCodes||[]).map(c=>[String(c.code||'').toUpperCase(), c]));
@@ -341,6 +471,7 @@ const Store = {
   save(){
     if(Store.mode === 'local'){
       localStorage.setItem(Store.KEY, JSON.stringify(Store.db));
+      Store.queueCloudSync('store-save');
     }
   },
 
@@ -1090,7 +1221,7 @@ const Store = {
 
   // 内部：API 模式下异步同步到后端（乐观更新，失败仅 toast）
   _sync(name, action, payload){
-    if(Store.mode !== 'api') { Store.save(); return; }
+    if(Store.mode !== 'api') { Store.save(); Store.queueCloudSync(`${name}:${action}`); return; }
     const path = Store.API_PATHS[name];
     if(!path) { Store.save(); return; }
     // 异步调用，不阻塞 UI

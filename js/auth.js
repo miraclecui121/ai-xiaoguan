@@ -205,7 +205,7 @@ const Auth = {
   },
 
   wechatLoginHint(){
-    return Auth.isLocalHost() ? '本机未配置时自动使用模拟授权' : '通过微信完成身份授权，进入演示空间';
+    return Auth.isLocalHost() ? '本机未配置时自动使用模拟授权' : 'PC扫码或微信内授权，跨端使用同一空间';
   },
 
   isLocalHost(){
@@ -227,6 +227,12 @@ const Auth = {
       const profile = data?.data?.user;
       if(!data?.data?.authenticated || !profile) return false;
       const user = Store.loginWithWechatOAuth(profile);
+      if(Store.restoreCloudWorkspace){
+        const cloud = await Store.restoreCloudWorkspace(profile);
+        if(cloud?.restored && typeof Toast!=='undefined'){
+          setTimeout(()=>Toast.show('已同步你的个人空间和历史数据', 'success'), 500);
+        }
+      }
       if(typeof Audit!=='undefined') Audit.log('wechat_oauth_session_restored', { action:'wechat_oauth_session', result:'success' });
       return !!user;
     }catch(e){
