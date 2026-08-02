@@ -7,6 +7,7 @@ const AI = {
   _cloudLoadedKey: '',
   _cloudLoading: false,
   _cloudSyncTimer: null,
+  _lastAnswerFocusAt: 0,
 
   // ===== @提及与上下文选择系统 =====
   // 上下文状态：用户通过@提及选择的客户/商机/专家
@@ -125,6 +126,10 @@ const AI = {
       const resp = await fetch(`/api/cloud/conversation?thread_key=${encodeURIComponent(threadKey)}`, { credentials:'include', cache:'no-store' });
       const data = await resp.json().catch(()=>null);
       if(resp.ok && data?.success && data.data?.exists && Array.isArray(data.data.messages) && data.data.messages.length){
+        if(AI.messages.some(m=>m.loading) || AI.messages.length > 1){
+          AI._cloudLoadedKey = threadKey;
+          return;
+        }
         AI.messages = data.data.messages
           .filter(m=>['user','bot'].includes(m?.role) && String(m.content||'').trim())
           .slice(-60)
@@ -762,6 +767,7 @@ const AI = {
   finishLoadingAnswer(content){
     const idx = AI.messages.length - 1;
     AI.messages[idx] = { role:'bot', content };
+    AI._lastAnswerFocusAt = Date.now();
     AI.renderMessages({ scroll:'answerStart', targetIndex:idx });
   },
 
@@ -997,7 +1003,7 @@ const AI = {
     if(!box)return;
     const previousScrollTop = box.scrollTop;
     const previousScrollHeight = box.scrollHeight;
-    box.innerHTML=AI.messages.map(m=>{
+    box.innerHTML=AI.messages.map((m,index)=>{
       if(m.loading){
         const ex=m.expertId?Experts.get(m.expertId):null;
         const expertName=ex?ex.name:'客户洞察';
@@ -1027,7 +1033,7 @@ const AI = {
         </div>`;
       }
       const bubbleClass = String(m.content||'').startsWith('::ai-html\n') ? 'ai-bubble ai-bubble-welcome' : 'ai-bubble';
-      return `<div class="ai-msg ${m.role}" data-msg-index="${AI.messages.indexOf(m)}">
+      return `<div class="ai-msg ${m.role}" data-msg-index="${index}">
         <div class="ai-avatar ${m.role}">${m.role==='bot'?'冠':'我'}</div>
         <div class="${bubbleClass}">${AI.formatContent(m.content)}</div>
       </div>`;
@@ -1044,7 +1050,8 @@ const AI = {
       const target = box.querySelector(`.ai-msg.bot[data-msg-index="${idx}"]`) || box.querySelector('.ai-msg.bot:last-of-type');
       if(target){
         const top = Math.max(0, target.offsetTop - 10);
-        box.scrollTo ? box.scrollTo({ top, behavior:'smooth' }) : (box.scrollTop = top);
+        box.scrollTop = top;
+        requestAnimationFrame(()=>AI.alignAnswerViewport(box));
         return;
       }
     }
@@ -1054,6 +1061,20 @@ const AI = {
       return;
     }
     box.scrollTop = box.scrollHeight;
+  },
+
+  alignAnswerViewport(box){
+    if(!box || window.innerWidth < 769) return;
+    const topbar = document.querySelector('.topbar');
+    const topbarH = topbar ? topbar.getBoundingClientRect().height : 0;
+    const rect = box.getBoundingClientRect();
+    const desiredTop = topbarH + 12;
+    if(Math.abs(rect.top - desiredTop) > 8){
+      window.scrollTo({
+        top: Math.max(0, window.scrollY + rect.top - desiredTop),
+        behavior:'smooth',
+      });
+    }
   },
 
   // markdown 富文本渲染（支持表格、标题、引用、分隔线、粗体）
