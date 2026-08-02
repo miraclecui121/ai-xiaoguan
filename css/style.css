@@ -299,10 +299,10 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 
 /* AI 对话 */
 .ai-layout{
-  display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;height:calc(100vh - var(--topbar-h) - 44px);
+  display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;height:clamp(480px,calc(100vh - var(--topbar-h) - 232px),760px);
   background:linear-gradient(180deg,#f7fbfa,#edf4f2);border:1px solid #dfe8e6;border-radius:12px;padding:12px;
 }
-.ai-chat{display:flex;flex-direction:column;background:rgba(255,255,255,.92);border:1px solid #e1e9e7;border-radius:12px;box-shadow:0 10px 24px rgba(15,63,60,.08);overflow:hidden}
+.ai-chat{display:flex;flex-direction:column;min-height:0;background:rgba(255,255,255,.92);border:1px solid #e1e9e7;border-radius:12px;box-shadow:0 10px 24px rgba(15,63,60,.08);overflow:hidden}
 .ai-msgs{flex:1;overflow-y:auto;padding:18px 20px;background:linear-gradient(180deg,#fbfdfc 0%,#f4f8f7 100%)}
 .ai-msg{display:flex;gap:10px;margin-bottom:16px}
 .ai-avatar{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;font-weight:800}
@@ -324,7 +324,7 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 .ai-suggestions-body{display:flex;gap:7px;flex-wrap:wrap;animation:panelExpand .25s ease both}
 .ai-chip{padding:6px 12px;border-radius:16px;background:var(--primary-bg);color:var(--primary);font-size:12.5px;cursor:pointer;border:1px solid transparent}
 .ai-chip:hover{border-color:var(--primary)}
-.ai-input-bar{display:flex;align-items:flex-end;gap:8px;padding:12px 14px;border-top:1px solid #dfe8e6;background:#fff}
+.ai-input-bar{position:sticky;bottom:0;z-index:6;display:flex;align-items:flex-end;gap:8px;padding:12px 14px;border-top:1px solid #dfe8e6;background:#fff}
 .ai-input-bar textarea{flex:1;min-height:44px;max-height:128px;border:1px solid #cfdad8;border-radius:9px;padding:11px 16px;background:#fff;resize:none;line-height:20px;overflow:hidden}
 .ai-input-bar textarea:focus{border-color:var(--primary-light)}
 .ai-input-bar .btn{height:44px}
@@ -334,7 +334,7 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 }
 .ai-search-toggle.active{border-color:#0f766e;background:#e7f7f4;color:#0f766e}
 .ai-search-toggle:hover{border-color:var(--primary-light)}
-.ai-side{display:flex;flex-direction:column;gap:12px;overflow-y:auto}
+.ai-side{display:flex;flex-direction:column;gap:12px;min-height:0;overflow-y:auto}
 .ai-insight{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px}
 .ai-insight h4{font-size:13px;margin-bottom:8px;color:var(--primary);display:flex;align-items:center;gap:5px}
 .ai-meter{height:8px;background:var(--gray-bg);border-radius:5px;overflow:hidden;margin:6px 0}
