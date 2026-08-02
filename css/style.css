@@ -84,6 +84,35 @@ a{color:inherit;text-decoration:none;cursor:pointer}
   width:18px;height:18px;border-radius:5px;background:#5eead4;color:#073b36;
   display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;
 }
+.expert-entry-btn{
+  position:relative;background:rgba(94,234,212,.18);border:1px solid rgba(94,234,212,.28);
+  font-weight:800;
+}
+.expert-entry-btn:hover{background:rgba(94,234,212,.28)}
+.expert-entry-label{white-space:nowrap}
+.expert-entry-btn.attention{animation:expertPulse 1.6s ease-in-out 2}
+@keyframes expertPulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(94,234,212,0)}
+  50%{box-shadow:0 0 0 7px rgba(94,234,212,.22)}
+}
+.expert-guide-bubble{
+  position:fixed;top:62px;right:88px;width:286px;z-index:1300;
+  background:#fff;color:var(--text);border:1px solid #d5ebe7;border-radius:12px;
+  box-shadow:0 16px 40px rgba(15,63,60,.18);padding:13px 14px;
+}
+.expert-guide-bubble::before{
+  content:"";position:absolute;top:-7px;right:24px;width:12px;height:12px;
+  background:#fff;border-left:1px solid #d5ebe7;border-top:1px solid #d5ebe7;
+  transform:rotate(45deg);
+}
+.expert-guide-title{font-size:14px;font-weight:900;color:var(--primary);margin-bottom:4px}
+.expert-guide-text{font-size:12px;line-height:1.55;color:var(--text-2)}
+.expert-guide-actions{display:flex;gap:8px;margin-top:10px}
+.expert-guide-primary,.expert-guide-ghost{
+  height:30px;border-radius:8px;padding:0 11px;font-size:12px;font-weight:800;
+}
+.expert-guide-primary{background:var(--primary);color:#fff}
+.expert-guide-ghost{background:#eef8f6;color:var(--primary)}
 .user-chip{display:flex;align-items:center;gap:8px}
 .avatar{
   width:30px;height:30px;border-radius:50%;background:var(--gold);color:#fff;
@@ -178,6 +207,19 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 
 /* 统计卡 */
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px}
+.expert-entry-card{
+  display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,#0f3f3c,#137267);
+  color:#fff;border-radius:12px;padding:14px 16px;margin-bottom:16px;
+  box-shadow:0 12px 28px rgba(15,63,60,.14);cursor:pointer;
+}
+.expert-entry-card:hover{filter:brightness(1.03)}
+.expert-entry-card-icon{
+  width:42px;height:42px;border-radius:12px;background:#5eead4;color:#073b36;
+  display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;flex-shrink:0;
+}
+.expert-entry-card-body{flex:1;min-width:0}
+.expert-entry-card-title{font-size:15px;font-weight:900;margin-bottom:3px}
+.expert-entry-card-desc{font-size:12px;color:#d8f7ef;line-height:1.55}
 .stat-card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;position:relative;overflow:hidden}
 .stat-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--primary)}
 .stat-card.gold::before{background:var(--gold)}
@@ -535,6 +577,11 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
   .btn-icon{height:38px;min-width:38px;padding:0 10px;border-radius:9px;justify-content:center;white-space:nowrap}
   .topbar-right>.btn-icon:not(.notif-bell){font-size:0;padding:0;width:38px}
   .topbar-right>.btn-icon:not(.notif-bell) .topbar-action-mark{font-size:12px;margin:0}
+  .topbar-right>.expert-entry-btn{font-size:12px;width:auto;min-width:72px;padding:0 10px}
+  .topbar-right>.expert-entry-btn .topbar-action-mark{font-size:11px;margin:0}
+  .topbar-right>.expert-entry-btn .expert-entry-label{font-size:12px}
+  .expert-guide-bubble{top:54px;right:46px;width:min(300px,calc(100vw - 24px))}
+  .expert-guide-bubble::before{right:72px}
   .notif-bell{width:38px;padding:0;font-size:16px}
   .user-chip{gap:0;min-width:30px}
   .user-chip span:not(.avatar){display:none!important}
@@ -548,6 +595,12 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
   .ai-page-title .badge{grid-column:2;justify-self:start;margin-left:0!important}
   .ai-page-title-text{min-width:0;white-space:nowrap}
   .page-desc{font-size:12px;line-height:1.55}
+  .expert-entry-card{align-items:flex-start;gap:10px;padding:13px 12px;flex-wrap:wrap}
+  .expert-entry-card-icon{width:34px;height:34px;border-radius:10px;font-size:17px}
+  .expert-entry-card-body{flex:1 1 calc(100% - 48px)}
+  .expert-entry-card-title{font-size:14px;line-height:1.35}
+  .expert-entry-card-desc{font-size:12px}
+  .expert-entry-card .btn{width:100%;justify-content:center;margin-top:2px}
   .stat-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
   .stat-card{padding:14px 12px;min-width:0}
   .stat-label{font-size:12px;line-height:1.35}

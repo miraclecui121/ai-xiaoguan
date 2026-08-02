@@ -10,6 +10,14 @@ const Dashboard = {
       <div><div class="page-title"><span class="page-mark">▦</span>数据看板</div><div class="page-desc">业绩概览 · 核心指标 · 商机动态 · 调用数据底座实时计算</div></div>
       <div class="toolbar"><button class="btn btn-primary" onclick="App.navigate('ai')">智能分析</button></div>
     </div>
+    <div class="expert-entry-card" onclick="App.openExpertsEntry()">
+      <div class="expert-entry-card-icon">冠</div>
+      <div class="expert-entry-card-body">
+        <div class="expert-entry-card-title">不知道从哪里开始？让10个销售专家先帮你看一遍</div>
+        <div class="expert-entry-card-desc">客户洞察、商机判断、拜访准备、赢单策略、销售SOP，一次进入都能问。</div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();App.openExpertsEntry()">进入10个专家</button>
+    </div>
     <!-- 核心指标 -->
     <div class="stat-grid">
       <div class="stat-card" style="cursor:pointer" onclick="Dashboard.drillCustomer('my')" title="点击查看客户明细"><div class="stat-label">客户总数 <span style="font-size:10px;color:var(--text-3);float:right">🔍 点击穿透</span></div><div class="stat-value">${st.customerTotal}</div><div class="stat-sub">我的 ${st.myCustomerTotal} · 公海 ${st.poolTotal}</div><div class="stat-icon">🏢</div></div>

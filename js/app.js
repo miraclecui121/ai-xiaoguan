@@ -70,6 +70,7 @@ const App = {
     main.scrollTop = 0;
     // 刷新铃铛
     App.refreshNotifBadge();
+    setTimeout(()=>App.maybeShowExpertGuide(), 180);
   },
 
   // 重新渲染当前页面（不滚动到顶部，不闪烁loading）
@@ -81,11 +82,51 @@ const App = {
     }
     // 刷新铃铛未读数量
     App.refreshNotifBadge();
+    setTimeout(()=>App.maybeShowExpertGuide(), 180);
   },
 
   withWorkspaceBanner(html){
     const banner = (typeof Personal!=='undefined' && Personal.renderWorkspaceBanner) ? Personal.renderWorkspaceBanner() : '';
     return banner + html;
+  },
+
+  openExpertsEntry(){
+    App.dismissExpertGuide();
+    if(typeof Audit!=='undefined') Audit.log('expert_entry_click', { action:'open_expert_entry', route:App.currentRoute });
+    App.navigate('ai');
+  },
+
+  expertGuideKey(){
+    const user = Store.currentUser ? Store.currentUser() : null;
+    const ent = Store.session?.enterpriseId || 'guest';
+    return `aixg_expert_guide_seen:${ent}:${user?.id || 'guest'}`;
+  },
+
+  maybeShowExpertGuide(){
+    if(App.currentRoute === 'ai') return;
+    const btn = document.querySelector('.expert-entry-btn');
+    if(!btn || document.getElementById('expertGuideBubble')) return;
+    try{ if(localStorage.getItem(App.expertGuideKey()) === '1') return; }catch(e){}
+    const bubble = document.createElement('div');
+    bubble.id = 'expertGuideBubble';
+    bubble.className = 'expert-guide-bubble';
+    bubble.innerHTML = `
+      <div class="expert-guide-title">10个销售专家在这里</div>
+      <div class="expert-guide-text">可以分析客户、商机、拜访、赢单策略，直接给下一步动作。</div>
+      <div class="expert-guide-actions">
+        <button class="expert-guide-primary" onclick="App.openExpertsEntry()">试一下</button>
+        <button class="expert-guide-ghost" onclick="App.dismissExpertGuide()">知道了</button>
+      </div>
+    `;
+    document.body.appendChild(bubble);
+    btn.classList.add('attention');
+  },
+
+  dismissExpertGuide(){
+    try{ localStorage.setItem(App.expertGuideKey(), '1'); }catch(e){}
+    const bubble = document.getElementById('expertGuideBubble');
+    if(bubble) bubble.remove();
+    document.querySelector('.expert-entry-btn')?.classList.remove('attention');
   },
 
   // ===== 消息通知系统 =====
