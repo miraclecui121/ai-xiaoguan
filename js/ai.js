@@ -375,7 +375,7 @@ const AI = {
     const hasChips=AI.ctx.customers.length||AI.ctx.opportunities.length||AI.ctx.experts.length;
     return `
     <div class="page-head">
-      <div><div class="page-title"><span class="page-mark">冠</span>AI销冠助手 <span class="badge badge-gold">销售决策引擎</span> ${AI.renderLLMStatusBadge()}</div>
+      <div><div class="page-title ai-page-title"><span class="page-mark">冠</span><span class="ai-page-title-text">AI销冠助手</span> <span class="badge badge-gold">销售决策引擎</span> ${AI.renderLLMStatusBadge()}</div>
       <div class="page-desc">围绕客户、联系人、商机数据生成销售判断，并把判断落到下一步动作</div></div>
     </div>
     <!-- 销售决策能力面板 -->
