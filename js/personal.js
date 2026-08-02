@@ -6,14 +6,18 @@ const Personal = {
     if(!ent) return '';
     if(Store.isDemoWorkspace()){
       const user = Store.currentUser();
-      const demoQuota = user?.identityProvider==='wechat_mock' && Number(user.aiCallQuota||0)
-        ? `微信体验 AI 额度：${Number(user.aiCallUsed||0)}/${Number(user.aiCallQuota||0)} 次。`
+      const trial = Store.demoTrialState ? Store.demoTrialState(user) : { applies:false };
+      const trialText = trial.applies
+        ? (trial.ok ? `体验期：剩余 ${trial.daysLeft} 天，到期后停止调用。` : `体验期已结束。`)
+        : '';
+      const demoQuota = Store.isWechatExperienceUser?.(user) && Number(user.aiCallQuota||0)
+        ? `AI 额度：${Number(user.aiCallUsed||0)}/${Number(user.aiCallQuota||0)} 次；联网：${Number(user.searchUsed||0)}/${Number(user.searchQuota||0)} 次。`
         : '';
       return `
       <div class="workspace-banner workspace-banner-demo">
         <div>
           <div class="workspace-banner-title">当前为演示数据空间</div>
-          <div class="workspace-banner-desc">可以体验 10 个销售分析视角；演示数据不会进入你的正式空间。${demoQuota}要导入或录入自己的客户数据，需要使用邀请码开通个人正式空间。</div>
+          <div class="workspace-banner-desc">可以体验 10 个销售分析视角；演示数据不会进入你的正式空间。${trialText}${demoQuota}要导入或录入自己的客户数据，需要使用邀请码开通个人正式空间。</div>
         </div>
         <button class="btn btn-primary btn-sm" onclick="Personal.openActivation('创建我的个人空间')">邀请码开通</button>
       </div>`;

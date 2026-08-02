@@ -673,6 +673,49 @@ const AI = {
     return null;
   },
 
+  pushLoading({expertId=null, question='', mode=''}={}){
+    AI.messages.push({
+      role:'bot',
+      content:'',
+      loading:true,
+      expertId,
+      question:String(question||''),
+      mode,
+      loadingAt:Date.now(),
+    });
+    AI.renderMessages();
+  },
+
+  loadingSteps(m){
+    const ex = m.expertId ? Experts.get(m.expertId) : null;
+    const q = String(m.question || '');
+    const needSearch = AI.shouldUseSearch(q, { expertId:m.expertId || '' });
+    const steps = [
+      { title:'识别问题意图', desc: ex ? `已匹配到「${ex.name}」分析视角` : '判断问题属于客户、商机、行业还是通用销售动作' },
+      { title:'读取可用上下文', desc: '整理已选客户、商机、历史追问和系统数据底座' },
+      needSearch
+        ? { title:'补充公开信息', desc:'判断需要联网，准备检索客户近况、政策、招投标或竞品线索' }
+        : { title:'判断信息边界', desc:'当前优先使用 CRM 数据和销售方法论，不额外检索网页' },
+      { title: ex ? `调用${ex.name}视角` : '调用平台模型', desc: ex ? (ex.loadingMsg || '按该视角组织判断顺序') : '生成结构化判断，不输出固定模板' },
+      { title:'沉淀行动路径', desc:'把判断收敛为风险、机会、下一步动作和验证方式' },
+    ];
+    return steps;
+  },
+
+  syncLoadingTicker(){
+    const hasLoading = AI.messages.some(m=>m.loading);
+    if(hasLoading && !AI._loadingTicker){
+      AI._loadingTicker = setInterval(()=>{
+        if(AI.messages.some(m=>m.loading)) AI.renderMessages();
+        else AI.syncLoadingTicker();
+      }, 1100);
+    }
+    if(!hasLoading && AI._loadingTicker){
+      clearInterval(AI._loadingTicker);
+      AI._loadingTicker = null;
+    }
+  },
+
   send(){
     const input=document.getElementById('aiInput');
     if(!input)return; // DOM尚未就绪
@@ -710,8 +753,7 @@ const AI = {
 
     // 场景1: 选择了专家 + 客户/商机 → 优先使用 LLM + 已选对象上下文
     if(hasExpert && (hasCustomer || hasOpp)){
-      AI.messages.push({role:'bot',content:'',loading:true,expertId});
-      AI.renderMessages();
+      AI.pushLoading({expertId, question:q, mode:'selected-context'});
       setTimeout(async ()=>{
         // 构建context ID
         let ctxId='';
@@ -758,8 +800,7 @@ const AI = {
 
     // 场景2: 选择了专家但没选客户/商机 → 尝试用LLM+专家提示词进行通用分析
     if(hasExpert && !hasCustomer && !hasOpp){
-      AI.messages.push({role:'bot',content:'',loading:true,expertId});
-      AI.renderMessages();
+      AI.pushLoading({expertId, question:q, mode:'expert-general'});
       setTimeout(async ()=>{
         let ans = null;
         // 优先使用LLM+专家提示词进行思考分析
@@ -791,8 +832,7 @@ const AI = {
 
     // 场景3: 选了客户/商机但没选专家 → 针对性分析该客户/商机
     if(!hasExpert && (hasCustomer || hasOpp)){
-      AI.messages.push({role:'bot',content:'',loading:true});
-      AI.renderMessages();
+      AI.pushLoading({question:q, mode:'object-analysis'});
       setTimeout(()=>{
         let ans='';
         if(hasOpp){
@@ -831,18 +871,18 @@ const AI = {
       const ex2=Experts.get(exId);
       if(!ex2){
         // 专家不存在，走通用LLM兜底
+        AI.pushLoading({question:q, mode:'fallback-chat'});
         setTimeout(async ()=>{
           const llmAns=await AI.tryLLM(q);
           const ans=llmAns||AI.analyze(q);
-          AI.messages.push({role:'bot',content:AI.searchEvidencePrefix()+ans});
+          AI.messages[AI.messages.length-1]={role:'bot',content:AI.searchEvidencePrefix()+ans};
           AI.renderMessages();
           const side=document.getElementById('aiSide');
           if(side)side.innerHTML=AI.renderInsights();
         },400);
         return;
       }
-      AI.messages.push({role:'bot',content:'',loading:true,expertId:exId});
-      AI.renderMessages();
+      AI.pushLoading({expertId:exId, question:q, mode:'intent-expert'});
       setTimeout(async ()=>{
         let ans=null;
         // 优先使用LLM+专家提示词进行思考分析
@@ -872,10 +912,11 @@ const AI = {
       return;
     }
     // 非专家关键词 → 先尝试 LLM 对话，不可用时走本地分析路由
+    AI.pushLoading({question:q, mode:'free-chat'});
     setTimeout(async ()=>{
       const llmAns = await AI.tryLLM(q);
       const ans = llmAns || (AI.isLLMReady() ? AI.llmFailureAnswer('自由对话') : AI.analyze(q));
-      AI.messages.push({role:'bot',content:AI.searchEvidencePrefix()+ans});
+      AI.messages[AI.messages.length-1]={role:'bot',content:AI.searchEvidencePrefix()+ans};
       AI.renderMessages();
       const side=document.getElementById('aiSide');
       if(side)side.innerHTML=AI.renderInsights();
@@ -889,13 +930,28 @@ const AI = {
       if(m.loading){
         const ex=m.expertId?Experts.get(m.expertId):null;
         const expertName=ex?ex.name:'客户洞察';
-        const loadingMsg=ex?ex.loadingMsg:'正在交叉分析客户画像、决策链、竞争态势';
         const expertColor=ex?ex.color:'#1a3a6b';
+        const elapsed = Math.max(0, Math.floor((Date.now() - Number(m.loadingAt||Date.now())) / 1000));
+        const steps = AI.loadingSteps(m);
+        const activeIndex = Math.min(steps.length - 1, Math.floor(elapsed / 2));
         return `<div class="ai-msg bot">
           <div class="ai-avatar bot">冠</div>
-          <div class="ai-bubble">
+          <div class="ai-bubble ai-bubble-loading">
             <div class="ai-expert-header" style="background:linear-gradient(135deg,${expertColor},${expertColor}dd)">正在调用「${expertName}」分析视角</div>
-            <div style="color:var(--text-3);font-size:13px">${loadingMsg}<span class="ai-loading-dots"><span></span><span></span><span></span></span></div>
+            <div class="ai-progress-head">
+              <span>正在把问题转成销售判断路径</span>
+              <em>已等待 ${elapsed}s</em>
+              <span class="ai-loading-dots"><span></span><span></span><span></span></span>
+            </div>
+            <div class="ai-progress-path">
+              ${steps.map((s,i)=>{
+                const state = i < activeIndex ? 'done' : (i === activeIndex ? 'active' : 'todo');
+                return `<div class="ai-progress-step ${state}">
+                  <i>${i < activeIndex ? '✓' : i + 1}</i>
+                  <div><b>${Utils.esc(s.title)}</b><small>${Utils.esc(s.desc)}</small></div>
+                </div>`;
+              }).join('')}
+            </div>
           </div>
         </div>`;
       }
@@ -906,6 +962,7 @@ const AI = {
       </div>`;
     }).join('');
     box.scrollTop=box.scrollHeight;
+    AI.syncLoadingTicker();
     AI.saveConversation();
   },
 

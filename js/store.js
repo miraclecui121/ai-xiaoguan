@@ -9,6 +9,7 @@ const Store = {
   KEY: 'aiwin_crm_db_v2',
   SESSION_KEY: 'aiwin_crm_session',
   ACQ_KEY: 'aixg_acquisition',
+  DEMO_TRIAL_DAYS: 3,
   db: null,
   session: { enterpriseId: null, userId: null, loginAt: null },
   // 当前模式：'api' 或 'local'，由 init() 检测后设定
@@ -164,6 +165,44 @@ const Store = {
   },
   getAcquisition(){
     try{ return JSON.parse(localStorage.getItem(Store.ACQ_KEY) || '{}'); }catch(e){ return {}; }
+  },
+
+  isWechatExperienceUser(user=Store.currentUser()){
+    return ['wechat_mock','wechat_oauth'].includes(user?.identityProvider);
+  },
+
+  ensureDemoTrial(user){
+    if(!user || !Store.isWechatExperienceUser(user)) return user;
+    const now = Utils.now();
+    const startedAt = user.trialStartedAt || user.createdAt || now;
+    const startDate = new Date(startedAt);
+    const validStart = Number.isNaN(startDate.getTime()) ? new Date() : startDate;
+    const expires = new Date(validStart.getTime());
+    expires.setDate(expires.getDate() + Store.DEMO_TRIAL_DAYS);
+    user.trialStartedAt = startedAt;
+    user.trialDays = Store.DEMO_TRIAL_DAYS;
+    user.trialExpiresAt = user.trialExpiresAt || expires.toISOString();
+    return user;
+  },
+
+  demoTrialState(user=Store.currentUser()){
+    const ent = Store.currentEnterprise();
+    if(!user || !ent || ent.workspaceType!=='demo' || !Store.isWechatExperienceUser(user)) return { applies:false, ok:true };
+    Store.ensureDemoTrial(user);
+    const expiresAt = new Date(user.trialExpiresAt);
+    if(Number.isNaN(expiresAt.getTime())) return { applies:true, ok:true, daysLeft:Store.DEMO_TRIAL_DAYS, expiresAt:'' };
+    const now = new Date();
+    const msLeft = expiresAt.getTime() - now.getTime();
+    const daysLeft = Math.max(0, Math.ceil(msLeft / (24 * 60 * 60 * 1000)));
+    return {
+      applies:true,
+      ok: msLeft > 0,
+      daysLeft,
+      expiresAt: expiresAt.toISOString().slice(0,10),
+      message: msLeft > 0
+        ? `演示体验还剩 ${daysLeft} 天`
+        : '3天演示体验期已结束。使用邀请码开通个人空间后，可继续导入客户并调用 AI 销售分析。',
+    };
   },
 
   applyBrandMigration(){
@@ -635,7 +674,9 @@ const Store = {
         lastLoginAt:Utils.now(),
         createdAt:Utils.now(),
       });
+      Store.ensureDemoTrial(user);
     }else{
+      Store.ensureDemoTrial(user);
       Store.update('users', user.id, { lastLoginAt:Utils.now(), sourceChannel:user.sourceChannel || acq.sourceChannel || '社群体验', campaignName:user.campaignName || acq.campaignName || '' });
     }
     Store.session = { enterpriseId:'ent_001', userId:user.id, loginAt:Utils.now(), authProvider:'wechat_mock' };
@@ -684,7 +725,9 @@ const Store = {
         lastLoginAt:Utils.now(),
         createdAt:Utils.now(),
       });
+      Store.ensureDemoTrial(user);
     }else{
+      Store.ensureDemoTrial(user);
       Store.update('users', user.id, {
         name:String(profile.nickname || user.name || '微信用户').trim().slice(0,30) || user.name,
         lastLoginAt:Utils.now(),
@@ -719,7 +762,9 @@ const Store = {
         return { ok:false, message:'当前个人空间 AI 调用额度已用完，请联系发放邀请码的人升级额度。' };
       }
     }
-    if(ent.workspaceType==='demo' && user.identityProvider==='wechat_mock'){
+    if(ent.workspaceType==='demo' && Store.isWechatExperienceUser(user)){
+      const trial = Store.demoTrialState(user);
+      if(!trial.ok) return { ok:false, message:trial.message };
       const quota = Number(user.aiCallQuota || 0);
       const used = Number(user.aiCallUsed || 0);
       if(quota > 0 && used >= quota){
@@ -740,7 +785,9 @@ const Store = {
         return { ok:false, message:'当前个人空间联网检索额度已用完，请联系发放邀请码的人升级额度。' };
       }
     }
-    if(ent.workspaceType==='demo' && user.identityProvider==='wechat_mock'){
+    if(ent.workspaceType==='demo' && Store.isWechatExperienceUser(user)){
+      const trial = Store.demoTrialState(user);
+      if(!trial.ok) return { ok:false, message:trial.message };
       const quota = Number(user.searchQuota || 0);
       const used = Number(user.searchUsed || 0);
       if(quota > 0 && used >= quota){
@@ -772,7 +819,7 @@ const Store = {
     if(ent && ent.workspaceType==='personal'){
       ent.aiCallUsed = Number(ent.aiCallUsed||0) + 1;
     }
-    if(ent && ent.workspaceType==='demo' && user?.identityProvider==='wechat_mock'){
+    if(ent && ent.workspaceType==='demo' && Store.isWechatExperienceUser(user)){
       user.aiCallUsed = Number(user.aiCallUsed||0) + 1;
     }
     Store.save();
@@ -802,7 +849,7 @@ const Store = {
     if(ent && ent.workspaceType==='personal'){
       ent.searchUsed = Number(ent.searchUsed||0) + 1;
     }
-    if(ent && ent.workspaceType==='demo' && user?.identityProvider==='wechat_mock'){
+    if(ent && ent.workspaceType==='demo' && Store.isWechatExperienceUser(user)){
       user.searchUsed = Number(user.searchUsed||0) + 1;
     }
     Store.save();

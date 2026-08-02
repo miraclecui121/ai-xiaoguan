@@ -394,11 +394,35 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 .ai-help-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .ai-help-list span{font-size:12px;background:#eef8f6;color:#0f3f3c;border:1px solid #d5ebe7;border-radius:999px;padding:5px 10px}
 .ai-expert-header{display:flex;align-items:center;gap:6px;padding:8px 14px;background:linear-gradient(135deg,var(--primary),var(--primary-dark));color:#fff;border-radius:8px;margin-bottom:10px;font-size:13px;font-weight:600}
+.ai-bubble-loading{min-width:min(520px,100%);background:#f3faf8;border:1px solid #dcebe8}
+.ai-progress-head{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  color:#49635f;font-size:13px;margin-bottom:10px;
+}
+.ai-progress-head span:first-child{font-weight:700;color:#193f3b}
+.ai-progress-head em{font-style:normal;font-size:11px;color:#78908c;background:#fff;border:1px solid #dce8e5;border-radius:999px;padding:2px 8px}
+.ai-progress-path{display:grid;gap:7px}
+.ai-progress-step{
+  display:grid;grid-template-columns:24px 1fr;gap:8px;align-items:start;
+  padding:8px 9px;border-radius:8px;border:1px solid transparent;background:rgba(255,255,255,.58);
+}
+.ai-progress-step i{
+  width:22px;height:22px;border-radius:999px;display:flex;align-items:center;justify-content:center;
+  font-style:normal;font-size:11px;font-weight:800;border:1px solid #cbded9;color:#78908c;background:#fff;line-height:1;
+}
+.ai-progress-step b{display:block;font-size:12.5px;color:#183f3b;margin-bottom:2px}
+.ai-progress-step small{display:block;font-size:11.5px;color:#6b817d;line-height:1.45}
+.ai-progress-step.done{background:#f2fbf6;border-color:#cbead8}
+.ai-progress-step.done i{background:#12a66a;border-color:#12a66a;color:#fff}
+.ai-progress-step.active{background:#fffdf2;border-color:#efd081;box-shadow:0 4px 12px rgba(183,126,0,.08)}
+.ai-progress-step.active i{background:#d99913;border-color:#d99913;color:#fff;animation:ai-pulse 1.2s ease-in-out infinite}
+.ai-progress-step.todo{opacity:.72}
 .ai-loading-dots{display:inline-flex;gap:4px;margin-left:4px}
 .ai-loading-dots span{width:6px;height:6px;background:var(--primary);border-radius:50%;animation:ai-bounce 1.4s infinite ease-in-out both}
 .ai-loading-dots span:nth-child(2){animation-delay:.16s}
 .ai-loading-dots span:nth-child(3){animation-delay:.32s}
 @keyframes ai-bounce{0%,80%,100%{transform:scale(0.3);opacity:.5}40%{transform:scale(1);opacity:1}}
+@keyframes ai-pulse{0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(217,153,19,.22)}50%{transform:scale(1.04);box-shadow:0 0 0 5px rgba(217,153,19,0)}}
 
 /* ===== AI销冠专家面板 ===== */
 .expert-panel{background:#fff;border:1px solid #e1e9e7;border-radius:12px;box-shadow:0 8px 20px rgba(15,63,60,.06);padding:14px 16px;margin-bottom:14px;transition:padding .25s ease}
