@@ -29,3 +29,7 @@ services:
         sync: false
       - key: ADMIN_LOG_TOKEN
         sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: "false"

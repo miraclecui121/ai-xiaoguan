@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import pg from "pg";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ENV_PATH = path.join(ROOT, ".env.local");
@@ -18,6 +19,9 @@ const WECHAT_STATE_TTL_MS = 10 * 60 * 1000;
 const WECHAT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const rateBuckets = new Map();
 const expertSoulCache = new Map();
+let pgPool = null;
+let pgInitPromise = null;
+let pgWarnedAt = 0;
 
 loadEnvFile(ENV_PATH);
 
@@ -40,7 +44,48 @@ const config = {
     : "official",
   wechatOAuthScope: process.env.WECHAT_OAUTH_SCOPE || "snsapi_userinfo",
   adminLogToken: process.env.ADMIN_LOG_TOKEN || "",
+  databaseUrl: process.env.DATABASE_URL || "",
+  databaseSsl: String(process.env.DATABASE_SSL || "").toLowerCase() === "true",
 };
+
+const DB_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS usage_logs (
+  id BIGSERIAL PRIMARY KEY,
+  ts TIMESTAMPTZ NOT NULL,
+  kind TEXT NOT NULL,
+  event TEXT,
+  ip_hash TEXT,
+  method TEXT,
+  path TEXT,
+  user_agent TEXT,
+  success BOOLEAN,
+  scope TEXT,
+  route TEXT,
+  account TEXT,
+  user_name TEXT,
+  enterprise_name TEXT,
+  workspace_type TEXT,
+  role TEXT,
+  invite_code TEXT,
+  source_channel TEXT,
+  campaign_name TEXT,
+  expert_id TEXT,
+  detected_customer_name TEXT,
+  customer_names TEXT[],
+  opportunity_names TEXT[],
+  question TEXT,
+  model TEXT,
+  tokens INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  payload JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS usage_logs_ts_idx ON usage_logs (ts DESC);
+CREATE INDEX IF NOT EXISTS usage_logs_kind_ts_idx ON usage_logs (kind, ts DESC);
+CREATE INDEX IF NOT EXISTS usage_logs_account_ts_idx ON usage_logs (account, ts DESC);
+CREATE INDEX IF NOT EXISTS usage_logs_expert_ts_idx ON usage_logs (expert_id, ts DESC);
+CREATE INDEX IF NOT EXISTS usage_logs_invite_ts_idx ON usage_logs (invite_code, ts DESC);
+`;
 
 const DOUBAO_SEARCH_ENDPOINTS = {
   global: "https://open.feedcoopapi.com/search_api/global_search",
@@ -94,6 +139,7 @@ const server = createServer(async (req, res) => {
           searchConfigured: Boolean(config.doubaoSearchApiKey),
           searchProvider: "Doubao Search",
           searchModel: config.doubaoSearchVersion,
+          logStorage: config.databaseUrl ? "postgres" : "jsonl",
         },
       });
     }
@@ -162,6 +208,8 @@ server.listen(config.port, config.host, () => {
   console.log(`Platform LLM: DeepSeek ${config.model} (${state})`);
   console.log(`Platform Search: Doubao Search ${config.doubaoSearchVersion} (${searchState})`);
   console.log(`Wechat OAuth: ${config.wechatOAuthMode} (${isWechatConfigured() ? "configured" : "missing WECHAT_APP_ID/WECHAT_APP_SECRET"})`);
+  console.log(`Postgres logs: ${config.databaseUrl ? "configured" : "missing DATABASE_URL"}`);
+  void ensureDatabaseReady();
 });
 
 function isWechatConfigured() {
@@ -1163,10 +1211,25 @@ async function writeLog(kind, req, event) {
   } catch (err) {
     console.warn(`[audit-log] write failed: ${err.message}`);
   }
+  void writeLogToPostgres(entry).catch((err) => warnPostgresOnce(`[postgres-log] write failed: ${err.message}`));
 }
 
 async function buildUsageSummary({ days = 7, limit = 200 } = {}) {
-  const entries = await readRecentLogs(days);
+  let entries = [];
+  let storage = {
+    type: "postgres",
+    note: "日志已写入 Render Postgres；Free Postgres 有 30 天过期限制，生产使用前应升级或迁移。",
+  };
+  try {
+    entries = await readRecentPostgresLogs(days);
+  } catch (err) {
+    warnPostgresOnce(`[postgres-log] summary fallback: ${err.message}`);
+    entries = await readRecentLogs(days);
+    storage = {
+      type: "ephemeral-jsonl",
+      note: "当前未能读取数据库，已回退读取本地容器日志；Render Free 环境下容器文件可能随重启或重新部署丢失。",
+    };
+  }
   const aiEntries = entries.filter((e) => e.kind === "ai-usage");
   const auditEntries = entries.filter((e) => e.kind === "audit");
   const questionEntries = entries
@@ -1237,10 +1300,7 @@ async function buildUsageSummary({ days = 7, limit = 200 } = {}) {
   return {
     generatedAt: new Date().toISOString(),
     days,
-    storage: {
-      type: "ephemeral-jsonl",
-      note: "Render Free 环境下容器文件可能随重启或重新部署丢失，后续应迁移到数据库或日志服务。",
-    },
+    storage,
     counts: {
       audit: auditEntries.length,
       aiUsage: aiEntries.length,
@@ -1261,6 +1321,116 @@ async function buildUsageSummary({ days = 7, limit = 200 } = {}) {
     experts: [...experts.values()].sort((a, b) => b.calls - a.calls),
     questions,
   };
+}
+
+async function ensureDatabaseReady() {
+  if (!config.databaseUrl) return null;
+  if (pgInitPromise) return pgInitPromise;
+  pgInitPromise = (async () => {
+    const { Pool } = pg;
+    pgPool = new Pool({
+      connectionString: config.databaseUrl,
+      max: 5,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+      ssl: config.databaseSsl ? { rejectUnauthorized: false } : false,
+    });
+    await pgPool.query(DB_SCHEMA_SQL);
+    console.log("[postgres-log] usage_logs schema ready");
+    return pgPool;
+  })().catch((err) => {
+    pgPool = null;
+    pgInitPromise = null;
+    throw err;
+  });
+  return pgInitPromise;
+}
+
+async function writeLogToPostgres(entry) {
+  const pool = await ensureDatabaseReady();
+  if (!pool) return;
+  const row = logEntryToDbRow(entry);
+  await pool.query(
+    `INSERT INTO usage_logs (
+      ts, kind, event, ip_hash, method, path, user_agent, success, scope, route,
+      account, user_name, enterprise_name, workspace_type, role, invite_code,
+      source_channel, campaign_name, expert_id, detected_customer_name,
+      customer_names, opportunity_names, question, model, tokens, duration_ms,
+      error, payload
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+      $11, $12, $13, $14, $15, $16,
+      $17, $18, $19, $20,
+      $21, $22, $23, $24, $25, $26,
+      $27, $28
+    )`,
+    [
+      row.ts, row.kind, row.event, row.ipHash, row.method, row.path, row.userAgent,
+      row.success, row.scope, row.route, row.account, row.userName, row.enterpriseName,
+      row.workspaceType, row.role, row.inviteCode, row.sourceChannel, row.campaignName,
+      row.expertId, row.detectedCustomerName, row.customerNames, row.opportunityNames,
+      row.question, row.model, row.tokens, row.durationMs, row.error, row.payload,
+    ],
+  );
+}
+
+async function readRecentPostgresLogs(days) {
+  const pool = await ensureDatabaseReady();
+  if (!pool) throw new Error("DATABASE_URL is not configured");
+  const queryLimit = Math.max(5000, Math.min(50000, days * 3000));
+  const result = await pool.query(
+    `SELECT payload
+       FROM usage_logs
+      WHERE ts >= NOW() - ($1::int * INTERVAL '1 day')
+      ORDER BY ts DESC
+      LIMIT $2`,
+    [days, queryLimit],
+  );
+  return result.rows.map((row) => row.payload).filter(Boolean);
+}
+
+function logEntryToDbRow(entry) {
+  const safe = sanitizeAudit(entry);
+  const merged = { ...entry, ...safe };
+  const user = normalizeUser(merged.user);
+  const context = merged.context && typeof merged.context === "object" ? merged.context : {};
+  return {
+    ts: merged.ts || new Date().toISOString(),
+    kind: merged.kind || "audit",
+    event: merged.event || "",
+    ipHash: merged.ipHash || "",
+    method: merged.method || "",
+    path: merged.path || "",
+    userAgent: merged.userAgent || "",
+    success: typeof merged.success === "boolean" ? merged.success : null,
+    scope: merged.scope || "",
+    route: merged.route || "",
+    account: user.account || "",
+    userName: user.userName || "",
+    enterpriseName: user.enterpriseName || "",
+    workspaceType: user.workspaceType || "",
+    role: user.role || "",
+    inviteCode: user.inviteCode || "",
+    sourceChannel: user.sourceChannel || "",
+    campaignName: user.campaignName || "",
+    expertId: merged.expertId || "",
+    detectedCustomerName: merged.detectedCustomerName || primaryCustomerName(merged) || "",
+    customerNames: Array.isArray(context.customerNames) ? context.customerNames.slice(0, 20) : [],
+    opportunityNames: Array.isArray(context.opportunityNames) ? context.opportunityNames.slice(0, 20) : [],
+    question: redactText(merged.question || ""),
+    model: merged.model || "",
+    tokens: Number(merged.usage?.total_tokens || 0) || 0,
+    durationMs: Number(merged.durationMs || 0) || 0,
+    error: merged.error || "",
+    payload: merged,
+  };
+}
+
+function warnPostgresOnce(message) {
+  const now = Date.now();
+  if (now - pgWarnedAt < 60000) return;
+  pgWarnedAt = now;
+  console.warn(message);
 }
 
 async function readRecentLogs(days) {
