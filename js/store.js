@@ -105,6 +105,7 @@ const Store = {
       Store.save();
     }
     Store.ensureWorkspaceDefaults();
+    await Store.syncInviteCodesFromServer();
   },
 
   ensureWorkspaceDefaults(){
@@ -316,6 +317,78 @@ const Store = {
     Store.ensureWorkspaceDefaults();
     return Store.db.settings.inviteCodes || [];
   },
+  async syncInviteCodesFromServer(){
+    if(typeof fetch==='undefined') return { ok:false, count:0, error:'当前浏览器不支持联网同步邀请码台账' };
+    try{
+      let resp = await fetch('/api/invite-ledger/codes', { cache:'no-store' });
+      let data = await resp.json().catch(()=>null);
+      if(!resp.ok || !Array.isArray(data?.data?.codes)){
+        resp = await fetch('data/invite-ledger.json', { cache:'no-store' });
+        data = await resp.json().catch(()=>null);
+        if(Array.isArray(data?.codes)) data = { data:{ codes:data.codes } };
+      }
+      const incoming = Array.isArray(data?.data?.codes) ? data.data.codes : [];
+      if(!resp.ok || !incoming.length) return { ok:false, count:0, error:'没有从后端台账读取到邀请码' };
+      Store.ensureWorkspaceDefaults();
+      const existing = new Map(Store.db.settings.inviteCodes.map(c=>[String(c.code||'').toUpperCase(), c]));
+      let changed = false;
+      incoming.forEach(raw=>{
+        const code = String(raw.code||'').toUpperCase();
+        if(!code) return;
+        const item = {
+          code,
+          type: raw.type || 'gift',
+          plan: raw.plan || 'personal_trial',
+          planName: raw.planName || '个人体验版',
+          sourceChannel: raw.sourceChannel || '社群内测',
+          campaignName: raw.campaignName || '首批体验',
+          maxUses: Number(raw.maxUses||1),
+          usedCount: Number(raw.usedCount||0),
+          aiCallQuota: Number(raw.aiCallQuota||100),
+          searchQuota: Number(raw.searchQuota||30),
+          customerLimit: Number(raw.customerLimit||100),
+          expiresAt: raw.expiresAt || '2026-12-31',
+          status: raw.status === 'disabled' ? 'disabled' : 'active',
+          remark: raw.remark || 'Excel台账批量码',
+          createdAt: raw.createdAt || Utils.now(),
+          createdBy: raw.createdBy || 'invite-ledger',
+          issuedAt: raw.issuedAt || '',
+          activatedAt: raw.activatedAt || '',
+        };
+        if(existing.has(code)){
+          const old = existing.get(code);
+          const before = JSON.stringify({
+            usedCount:old.usedCount,maxUses:old.maxUses,aiCallQuota:old.aiCallQuota,searchQuota:old.searchQuota,
+            customerLimit:old.customerLimit,expiresAt:old.expiresAt,sourceChannel:old.sourceChannel,campaignName:old.campaignName,
+            planName:old.planName,remark:old.remark
+          });
+          old.usedCount = Math.max(Number(old.usedCount||0), item.usedCount);
+          old.maxUses = item.maxUses;
+          old.aiCallQuota = item.aiCallQuota;
+          old.searchQuota = item.searchQuota;
+          old.customerLimit = item.customerLimit;
+          old.expiresAt = item.expiresAt;
+          old.sourceChannel = item.sourceChannel;
+          old.campaignName = item.campaignName;
+          old.planName = item.planName;
+          old.remark = item.remark;
+          const after = JSON.stringify({
+            usedCount:old.usedCount,maxUses:old.maxUses,aiCallQuota:old.aiCallQuota,searchQuota:old.searchQuota,
+            customerLimit:old.customerLimit,expiresAt:old.expiresAt,sourceChannel:old.sourceChannel,campaignName:old.campaignName,
+            planName:old.planName,remark:old.remark
+          });
+          if(before !== after) changed = true;
+        }else{
+          Store.db.settings.inviteCodes.push(item);
+          changed = true;
+        }
+      });
+      if(changed) Store.save();
+      return { ok:true, count:incoming.length, changed };
+    }catch(e){
+      return { ok:false, count:0, error:e.message || '同步邀请码台账失败' };
+    }
+  },
   inviteActivations(){
     Store.ensureWorkspaceDefaults();
     return Store.db.settings.inviteActivations || [];
@@ -355,6 +428,7 @@ const Store = {
       codes.push(item);
     }
     Store.save();
+    Store.reportInviteCodesGenerated(codes);
     return codes;
   },
   inviteUsageSummary(){
@@ -448,7 +522,7 @@ const Store = {
     invite.usedCount = Number(invite.usedCount||0) + 1;
     invite.lastUsedAt = Utils.now();
     invite.lastUsedBy = name;
-    Store.db.settings.inviteActivations.push({
+    const activation = {
       id:Utils.uid('act'),
       code:invite.code,
       type:invite.type || '',
@@ -462,11 +536,67 @@ const Store = {
       account,
       phone,
       activatedAt:Utils.now(),
-    });
+    };
+    Store.db.settings.inviteActivations.push(activation);
     Store.session = { enterpriseId: entId, userId, loginAt: Utils.now() };
     Store.saveSession();
     Store.save();
+    Store.reportInviteActivation(invite, activation);
     return { enterprise: Store.enterprise(entId), user: Store.user(userId), invite };
+  },
+  reportInviteCodesGenerated(codes){
+    if(typeof fetch==='undefined' || !Array.isArray(codes) || !codes.length) return;
+    try{
+      fetch('/api/invite-ledger/import', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ codes }),
+        keepalive:true,
+      }).catch(()=>{});
+    }catch(e){}
+  },
+  reportInviteIssued(code, inviteLink='', issuedTo=''){
+    const normalized = String(code||'').toUpperCase();
+    if(!normalized || typeof fetch==='undefined') return;
+    const item = Store.findInviteCode(normalized);
+    if(item){
+      item.issuedAt = item.issuedAt || Utils.now();
+      item.issuedBy = Store.currentUser()?.name || '';
+      item.issuedTo = issuedTo || item.issuedTo || '';
+      Store.save();
+    }
+    try{
+      fetch('/api/invite-ledger/issue', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          code: normalized,
+          inviteLink,
+          issuedBy: Store.currentUser()?.name || 'local-admin',
+          issuedTo,
+        }),
+        keepalive:true,
+      }).catch(()=>{});
+    }catch(e){}
+  },
+  reportInviteActivation(invite, activation){
+    if(!invite?.code || typeof fetch==='undefined') return;
+    try{
+      fetch('/api/invite-ledger/activate', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          code: invite.code,
+          usedCount: invite.usedCount,
+          userName: activation.userName,
+          account: activation.account,
+          enterpriseId: activation.enterpriseId,
+          userId: activation.userId,
+          activatedAt: activation.activatedAt,
+        }),
+        keepalive:true,
+      }).catch(()=>{});
+    }catch(e){}
   },
 
   loginWithWechatDemo(){

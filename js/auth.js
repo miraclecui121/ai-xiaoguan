@@ -109,7 +109,7 @@ const Auth = {
           ${isApi ? '<div class="login-hint-title">已开通企业账号</div><div class="login-hint-item">选择企业 → 输入账号密码登录</div>' : `
           <div class="login-hint-title">先体验，再用邀请码开通个人空间</div>
           <button class="login-hint-item login-demo-account" onclick="Auth.fillDemoAccount('ent_001','sales1','123456')" type="button"><span class="badge badge-gold">演示体验</span> <code>星瀚增长 / sales1</code> — 默认演示数据</button>
-          <button class="login-hint-item login-demo-account" onclick="Personal.openActivation('开通个人正式空间')" type="button"><span class="badge badge-green">个人版</span> 邀请码开通 — 导入自己的客户数据</button>
+          <button class="login-hint-item login-demo-account" onclick="Personal.openActivation('开通个人正式空间')" type="button"><span class="badge badge-green">个人版</span> 输入邀请码开通 — 不必使用专属链接</button>
           <button class="login-hint-item login-demo-account" onclick="Auth.fillDemoAccount('ent_001','admin','admin')" type="button"><span class="badge badge-gray">管理演示</span> <code>admin / admin</code> — 企业管理员</button>
           `}
         </div>

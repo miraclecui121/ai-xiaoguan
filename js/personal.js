@@ -65,17 +65,17 @@ const Personal = {
         </div>
         <div class="form-grid-2">
           ${passwordField}
-          <div class="form-row"><label class="form-label">邀请码 <span class="req">*</span></label><input class="form-input" id="actCode" value="${Utils.esc(acq.inviteCode||'')}" placeholder="请输入邀请码" style="text-transform:uppercase"></div>
+          <div class="form-row"><label class="form-label">邀请码 <span class="req">*</span></label><input class="form-input" id="actCode" value="${Utils.esc(acq.inviteCode||'')}" placeholder="输入你拿到的邀请码，如 AIXG0802-XXXX-XXXX" style="text-transform:uppercase"></div>
         </div>
         <div id="actError" class="login-error" style="display:none"></div>
-        <div class="activation-footnote">内测阶段邀请码可收费、赠送或渠道发放；每个邀请码会绑定权益包和AI调用额度。</div>
+        <div class="activation-footnote">可以直接输入邀请码开通；邀请链接只是帮你自动填码和记录来源。每个邀请码会绑定权益包和 AI 调用额度。</div>
       </div>`,
       footer: `<button class="btn btn-ghost" onclick="Modal.close()">取消</button><button class="btn btn-primary" onclick="Personal.activate(${hasLogin?'true':'false'})">开通并进入</button>`
     });
     setTimeout(()=>document.getElementById('actName')?.focus(), 50);
   },
 
-  activate(fromLoggedIn){
+  async activate(fromLoggedIn){
     const err = document.getElementById('actError');
     const name = document.getElementById('actName')?.value.trim();
     const account = document.getElementById('actAccount')?.value.trim();
@@ -84,7 +84,21 @@ const Personal = {
     const password = document.getElementById('actPassword')?.value.trim() || (isWechat ? 'wechat_auth' : '');
     const code = document.getElementById('actCode')?.value.trim();
     if(err) err.style.display = 'none';
+    const btn = Array.from(document.querySelectorAll('.modal-footer .btn-primary')).find(b=>b.textContent.includes('开通'));
+    if(btn){ btn.disabled = true; btn.textContent = '校验邀请码...'; }
     try{
+      const existedBefore = Store.findInviteCode(code);
+      const syncResult = Store.syncInviteCodesFromServer ? await Store.syncInviteCodesFromServer() : { ok:false };
+      const existedAfter = Store.findInviteCode(code);
+      if(!existedBefore && !existedAfter){
+        const normalized = String(code||'').trim().toUpperCase();
+        if(/^AIXG0802-/.test(normalized)){
+          throw new Error(syncResult?.ok
+            ? '邀请码台账已同步，但没有找到这个码。请检查是否输入错字符，或换一个未使用的邀请码。'
+            : `未能同步首批邀请码台账。请确认当前页面是通过 npm start 的 http://127.0.0.1 访问，不要用 file:// 打开。${syncResult?.error ? '原因：'+syncResult.error : ''}`);
+        }
+      }
+      if(btn) btn.textContent = '开通中...';
       const result = Store.activatePersonalWorkspace({ code, name, account, password, phone: account });
       Modal.close();
       Auth.showApp();
@@ -98,6 +112,8 @@ const Personal = {
       }else{
         Toast.show(e.message || '开通失败', 'error');
       }
+    }finally{
+      if(btn){ btn.disabled = false; btn.textContent = '开通并进入'; }
     }
   },
 
