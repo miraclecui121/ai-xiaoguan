@@ -25,3 +25,7 @@
 - 2026-08-01：`aisales.zhixingmap.com` 已从旧 Static Site `srv-d9gspkjtqb8s73e4v4mg` 解绑并添加到新 Web Service `srv-d9mult6417fc73c9bkk0`；Render 显示域名 Verified、证书 Pending。当前本机 DNS 仍解析到旧 CNAME `ai-xiaoguan.onrender.com`，需在 DNS 面板把 `aisales` CNAME 改为 `ai-xiaoguan-caqq.onrender.com` 后再等证书签发。
 - 2026-08-01：Render Web Service 已在环境变量中配置微信公众账号 OAuth 所需 `WECHAT_APP_ID` 与 `WECHAT_APP_SECRET`，凭据只保存在 Render 环境变量，不写入代码或仓库；`/api/auth/wechat/start` 已能生成微信授权跳转。
 - 2026-08-01：微信公众号网页授权域名校验文件 `MP_verify_ufp3MxxkS25gBKME.txt` 已放入发布工程根目录；Render 部署后应可通过站点根路径直接访问，用于公众号后台域名校验。
+- 2026-08-01：尽管本机 DNS 仍显示 `aisales.zhixingmap.com CNAME ai-xiaoguan.onrender.com`，Render 已按 Host 将 `aisales.zhixingmap.com` 路由到新 Node Web Service；正式域名首页、微信 OAuth 状态/跳转、DeepSeek 平台代理和豆包搜索代理均返回新服务结果。短期可保留旧 CNAME，长期仍建议改为 `ai-xiaoguan-caqq.onrender.com` 降低托管侧变更风险。
+- 2026-08-02：用户将 `aisales` CNAME 改到新 Render Web Service 后，权威 DNS `ns7/ns8.cnmsn.net` 已返回 `ai-xiaoguan-caqq.onrender.com`，但公共递归 DNS 仍在新旧 CNAME 间抖动，导致正式域名 HTTPS/API 偶发失败；微信 10003 则是公众号后台“网页授权域名”未与 `redirect_uri=https://aisales.zhixingmap.com/api/auth/wechat/callback` 的域名匹配，应在公众号后台填 `aisales.zhixingmap.com`。
+- 2026-08-02：当前业务日志写入容器本地 `logs/*.jsonl`，Render Free 实例不支持 Shell Access，无法直接读取线上容器文件；Render Logs 只能看 stdout/stderr。后续要做真实用户分析，应改为持久化审计表/日志汇聚，且在 AI 调用日志中记录解析后的客户名称与对象 ID。
+- 2026-08-02：新增管理员使用日志 MVP：服务端提供受 `ADMIN_LOG_TOKEN` 保护的 `/api/admin/usage-summary`，系统设置管理员区增加“用户使用日志”查询卡片；AI/搜索日志增加 `customerNames/opportunityNames/detectedCustomerName`，方便按用户、客户、专家和问题汇总。当前仍是容器 JSONL 临时存储，下一步应接数据库。

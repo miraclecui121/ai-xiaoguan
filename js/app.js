@@ -313,7 +313,7 @@ const App = {
       </div>
       </div>
     </div>
-    ${Store.isAdmin() ? App.renderInviteAdminCard() : ''}
+    ${Store.isAdmin() ? App.renderInviteAdminCard() + App.renderAdminUsageLogCard() : ''}
     ${App.renderSubscriptionCard(subTxt, subStyle)}
     <div class="card">
       <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
@@ -413,6 +413,138 @@ const App = {
         <tbody>${table}</tbody>
       </table>
     </div>`;
+  },
+
+  renderAdminUsageLogCard(){
+    const savedToken = localStorage.getItem('aixg_admin_log_token') || '';
+    const summary = App.adminUsageSummary || null;
+    const status = summary
+      ? `<span class="badge badge-green">已加载 ${Number(summary.counts?.questions||0)} 条问题</span>`
+      : `<span class="badge badge-gray">需要查询口令</span>`;
+    return `
+    <div class="card admin-usage-card">
+      <div class="card-title">
+        <span>用户使用日志</span>
+        ${status}
+      </div>
+      <div class="invite-admin-note">
+        用于上线后查看用户问过什么、围绕哪些客户、调用了哪些专家和模型额度。当前读取服务端日志文件；Render Free 重启或重新部署后可能丢失历史，后续应迁移到数据库。
+      </div>
+      <div class="admin-log-toolbar">
+        <input class="form-input" id="adminLogToken" type="password" value="${Utils.esc(savedToken)}" placeholder="输入 ADMIN_LOG_TOKEN 查询口令">
+        <select class="form-input" id="adminLogDays">
+          <option value="1">近 1 天</option>
+          <option value="7" selected>近 7 天</option>
+          <option value="30">近 30 天</option>
+        </select>
+        <button class="btn btn-primary" onclick="App.loadAdminUsageSummary()">查询日志</button>
+        <button class="btn btn-ghost" onclick="App.clearAdminUsageSummary()">清空</button>
+      </div>
+      <div id="adminUsageSummary">${App.renderAdminUsageSummary(summary)}</div>
+    </div>`;
+  },
+
+  renderAdminUsageSummary(summary){
+    if(!summary){
+      return `<div class="admin-log-empty">输入查询口令后，可查看用户、客户、专家和最近问题。查询口令只保存在当前浏览器本地。</div>`;
+    }
+    const counts = summary.counts || {};
+    const userRows = (summary.users || []).slice(0,8).map(row=>`
+      <tr>
+        <td>${Utils.esc(row.user?.userName || '未知')}<small>${Utils.esc(row.user?.account || '')}</small></td>
+        <td>${Utils.esc(row.user?.enterpriseName || '—')}<small>${Utils.esc(row.user?.workspaceType || '')}</small></td>
+        <td>${Number(row.calls||0)}</td>
+        <td>${Number(row.tokens||0).toLocaleString()}</td>
+        <td>${Number(row.fail||0)}</td>
+      </tr>`).join('') || `<tr><td colspan="5" class="empty">暂无用户调用</td></tr>`;
+    const customerRows = (summary.customers || []).slice(0,8).map(row=>`
+      <tr>
+        <td>${Utils.esc(row.customerName || '未识别客户')}</td>
+        <td>${Number(row.calls||0)}</td>
+        <td>${Number(row.users||0)}</td>
+        <td>${(row.experts || []).map(x=>`<code>${Utils.esc(x)}</code>`).join(' ') || '—'}</td>
+        <td>${Utils.esc(row.lastQuestion || '—')}</td>
+      </tr>`).join('') || `<tr><td colspan="5" class="empty">暂无可识别客户</td></tr>`;
+    const questionRows = (summary.questions || []).slice(0,30).map(q=>`
+      <tr>
+        <td>${Utils.esc(App.formatAdminLogTime(q.ts))}<small>${Utils.esc(q.kind || '')}${q.success===false ? ' · 失败' : ''}</small></td>
+        <td>${Utils.esc(q.user?.userName || '未知')}<small>${Utils.esc(q.user?.account || '')}</small></td>
+        <td>${Utils.esc(q.customerName || '未识别')}<small>${Utils.esc((q.customerNames||[]).join('、') || (q.opportunityNames||[]).join('、') || '')}</small></td>
+        <td>${Utils.esc(q.expertId || '—')}</td>
+        <td>${Utils.esc(q.question || '')}<small>${Utils.esc(q.error || q.model || '')}${q.tokens ? ` · ${Number(q.tokens).toLocaleString()} tokens` : ''}</small></td>
+      </tr>`).join('') || `<tr><td colspan="5" class="empty">暂无问题</td></tr>`;
+    return `
+      <div class="admin-log-stats">
+        <div><b>${Number(counts.users||0)}</b><span>用户</span></div>
+        <div><b>${Number(counts.questions||0)}</b><span>问题</span></div>
+        <div><b>${Number(counts.customers||0)}</b><span>客户</span></div>
+        <div><b>${Number(counts.aiUsage||0)}</b><span>AI/搜索调用</span></div>
+      </div>
+      <div class="admin-log-grid">
+        <div>
+          <h4>活跃用户</h4>
+          <table class="data-table compact-table"><thead><tr><th>用户</th><th>空间</th><th>调用</th><th>Token</th><th>失败</th></tr></thead><tbody>${userRows}</tbody></table>
+        </div>
+        <div>
+          <h4>客户热度</h4>
+          <table class="data-table compact-table"><thead><tr><th>客户</th><th>次数</th><th>用户</th><th>专家</th><th>最近问题</th></tr></thead><tbody>${customerRows}</tbody></table>
+        </div>
+      </div>
+      <h4 class="admin-log-title">最近问题</h4>
+      <table class="data-table compact-table admin-question-table"><thead><tr><th>时间</th><th>用户</th><th>客户</th><th>专家</th><th>问题</th></tr></thead><tbody>${questionRows}</tbody></table>
+      <div class="admin-log-empty">生成时间：${Utils.esc(App.formatAdminLogTime(summary.generatedAt))} · 存储：${Utils.esc(summary.storage?.type || '')}</div>
+    `;
+  },
+
+  async loadAdminUsageSummary(){
+    const token = document.getElementById('adminLogToken')?.value || '';
+    const days = Number(document.getElementById('adminLogDays')?.value || 7);
+    if(!token.trim()){
+      Toast.show('请输入日志查询口令', 'warning');
+      return;
+    }
+    localStorage.setItem('aixg_admin_log_token', token);
+    try{
+      const resp = await fetch('/api/admin/usage-summary', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-Admin-Log-Token':token},
+        body:JSON.stringify({ days, limit:200 }),
+        credentials:'include',
+      });
+      const data = await resp.json().catch(()=>null);
+      if(!resp.ok || !data?.success){
+        const msg = data?.error === 'admin_log_token_not_configured'
+          ? '服务端尚未配置 ADMIN_LOG_TOKEN'
+          : data?.error === 'unauthorized'
+            ? '查询口令不正确'
+            : (data?.message || data?.error || `查询失败 HTTP ${resp.status}`);
+        throw new Error(msg);
+      }
+      App.adminUsageSummary = data.data;
+      const target = document.getElementById('adminUsageSummary');
+      if(target) target.innerHTML = App.renderAdminUsageSummary(App.adminUsageSummary);
+      Toast.show('日志已加载', 'success');
+    }catch(e){
+      Toast.show(e.message || '日志查询失败', 'error');
+    }
+  },
+
+  clearAdminUsageSummary(){
+    App.adminUsageSummary = null;
+    localStorage.removeItem('aixg_admin_log_token');
+    const token = document.getElementById('adminLogToken');
+    if(token) token.value = '';
+    const target = document.getElementById('adminUsageSummary');
+    if(target) target.innerHTML = App.renderAdminUsageSummary(null);
+  },
+
+  formatAdminLogTime(ts){
+    if(!ts) return '';
+    try{
+      return new Date(ts).toLocaleString('zh-CN', { hour12:false });
+    }catch(e){
+      return String(ts);
+    }
   },
 
   generateInviteCodesFromForm(){

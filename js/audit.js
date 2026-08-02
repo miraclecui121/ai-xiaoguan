@@ -23,7 +23,9 @@ const Audit = {
     const ctx = (typeof AI !== 'undefined' && AI.ctx) ? AI.ctx : {};
     return {
       customerIds: (ctx.customers || []).map(x => x.id),
+      customerNames: (ctx.customers || []).map(x => x.name).filter(Boolean),
       opportunityIds: (ctx.opportunities || []).map(x => x.id),
+      opportunityNames: (ctx.opportunities || []).map(x => x.name).filter(Boolean),
       expertIds: (ctx.experts || []).map(x => x.id),
     };
   },

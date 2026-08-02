@@ -27,3 +27,5 @@ services:
         sync: false
       - key: DOUBAO_SEARCH_API_KEY
         sync: false
+      - key: ADMIN_LOG_TOKEN
+        sync: false

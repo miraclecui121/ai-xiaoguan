@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
-import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, stat } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
@@ -39,6 +39,7 @@ const config = {
     ? String(process.env.WECHAT_OAUTH_MODE).trim().toLowerCase()
     : "official",
   wechatOAuthScope: process.env.WECHAT_OAUTH_SCOPE || "snsapi_userinfo",
+  adminLogToken: process.env.ADMIN_LOG_TOKEN || "",
 };
 
 const DOUBAO_SEARCH_ENDPOINTS = {
@@ -137,6 +138,10 @@ const server = createServer(async (req, res) => {
 
     if (url.pathname === "/api/audit/log" && req.method === "POST") {
       return handleAuditLog(req, res);
+    }
+
+    if (url.pathname === "/api/admin/usage-summary" && req.method === "POST") {
+      return handleAdminUsageSummary(req, res);
     }
 
     if (req.method !== "GET" && req.method !== "HEAD") {
@@ -345,6 +350,7 @@ async function handlePlatformChat(req, res) {
   const expertId = String(body.expertId || audit.expertId || "").trim();
   const expertSoul = loadExpertSoul(expertId);
   const lastUserMessage = [...messages].reverse().find((m) => m.role === "user")?.content || "";
+  const detectedCustomerName = primaryCustomerName({ question: lastUserMessage, context: audit.context });
   const startedAt = Date.now();
 
   const controller = new AbortController();
@@ -399,6 +405,7 @@ async function handlePlatformChat(req, res) {
         user: audit.user || null,
         expertId: expertId || null,
         context: audit.context || null,
+        detectedCustomerName,
         question: redactText(lastUserMessage),
         model: config.model,
         durationMs: Date.now() - startedAt,
@@ -427,6 +434,7 @@ async function handlePlatformChat(req, res) {
       user: audit.user || null,
       expertId: expertId || null,
       context: audit.context || null,
+      detectedCustomerName,
       question: redactText(lastUserMessage),
       model: data.model || config.model,
       durationMs: Date.now() - startedAt,
@@ -451,6 +459,7 @@ async function handlePlatformChat(req, res) {
       user: audit.user || null,
       expertId: expertId || null,
       context: audit.context || null,
+      detectedCustomerName,
       question: redactText(lastUserMessage),
       model: config.model,
       durationMs: Date.now() - startedAt,
@@ -481,6 +490,43 @@ async function handleAuditLog(req, res) {
   return sendJson(res, 200, { success: true });
 }
 
+async function handleAdminUsageSummary(req, res) {
+  if (!isAllowedOrigin(req)) {
+    await writeLog("security", req, { event: "origin_forbidden", path: req.url || "" });
+    return sendJson(res, 403, { success: false, error: "origin_forbidden" });
+  }
+  if (!config.adminLogToken) {
+    return sendJson(res, 503, { success: false, error: "admin_log_token_not_configured" });
+  }
+  const token = String(req.headers["x-admin-log-token"] || "");
+  if (!safeEqualText(token, config.adminLogToken)) {
+    await writeLog("security", req, { event: "admin_usage_summary_denied", path: req.url || "" });
+    return sendJson(res, 401, { success: false, error: "unauthorized" });
+  }
+  if (!checkRateLimit(`admin-usage:${clientKey(req)}`)) {
+    await writeLog("security", req, { event: "rate_limited", path: req.url || "" });
+    return sendJson(res, 429, { success: false, error: "rate_limited" });
+  }
+
+  const raw = await readBody(req, 16 * 1024);
+  let body = {};
+  try {
+    body = JSON.parse(raw || "{}");
+  } catch {
+    return sendJson(res, 400, { success: false, error: "invalid_json" });
+  }
+  const days = clampNumber(body.days, 1, 30, 7);
+  const limit = clampNumber(body.limit, 20, 500, 200);
+  const summary = await buildUsageSummary({ days, limit });
+  await writeLog("audit", req, {
+    event: "admin_usage_summary_viewed",
+    action: "admin_usage_summary",
+    result: "success",
+    usage: { result_count: summary.questions.length },
+  });
+  return sendJson(res, 200, { success: true, data: summary });
+}
+
 async function handlePlatformSearch(req, res) {
   if (!config.doubaoSearchApiKey) {
     await writeLog("ai-usage", req, { event: "platform_search_rejected", reason: "missing_doubao_search_api_key" });
@@ -508,6 +554,7 @@ async function handlePlatformSearch(req, res) {
   const audit = sanitizeAudit(body.audit || {});
   const contextText = String(body.contextText || "").slice(0, 6000);
   const expertId = String(body.expertId || audit.expertId || "").trim();
+  const detectedCustomerName = primaryCustomerName({ question, context: audit.context });
   const version = ["global", "custom"].includes(String(body.version || "").trim().toLowerCase())
     ? String(body.version).trim().toLowerCase()
     : config.doubaoSearchVersion;
@@ -538,6 +585,8 @@ async function handlePlatformSearch(req, res) {
         route: audit.route || "",
         user: audit.user || null,
         expertId: expertId || null,
+        context: audit.context || null,
+        detectedCustomerName,
         question: redactText(question),
         model: `doubao-search-${version}`,
         durationMs: Date.now() - startedAt,
@@ -565,6 +614,8 @@ async function handlePlatformSearch(req, res) {
       route: audit.route || "",
       user: audit.user || null,
       expertId: expertId || null,
+      context: audit.context || null,
+      detectedCustomerName,
       question: redactText(question),
       model: `doubao-search-${version}`,
       durationMs: Date.now() - startedAt,
@@ -589,6 +640,8 @@ async function handlePlatformSearch(req, res) {
       route: audit.route || "",
       user: audit.user || null,
       expertId: expertId || null,
+      context: audit.context || null,
+      detectedCustomerName,
       question: redactText(question),
       model: `doubao-search-${version}`,
       durationMs: Date.now() - startedAt,
@@ -1033,15 +1086,21 @@ function sanitizeAudit(input) {
       enterpriseName: scrubValue(src.user.enterpriseName, "enterpriseName"),
       workspaceType: scrubValue(src.user.workspaceType, "workspaceType"),
       role: scrubValue(src.user.role, "role"),
+      inviteCode: scrubValue(src.user.inviteCode, "inviteCode"),
+      sourceChannel: scrubValue(src.user.sourceChannel, "sourceChannel"),
+      campaignName: scrubValue(src.user.campaignName, "campaignName"),
     };
   }
   if (src.context && typeof src.context === "object") {
     safe.context = {
       customerIds: scrubIdList(src.context.customerIds),
+      customerNames: scrubNameList(src.context.customerNames),
       opportunityIds: scrubIdList(src.context.opportunityIds),
+      opportunityNames: scrubNameList(src.context.opportunityNames),
       expertIds: scrubIdList(src.context.expertIds),
     };
   }
+  if (src.detectedCustomerName) safe.detectedCustomerName = scrubValue(src.detectedCustomerName, "detectedCustomerName");
   if (src.question) safe.question = redactText(src.question);
   if (src.message) safe.message = redactText(src.message);
   if (src.usage && typeof src.usage === "object") {
@@ -1058,6 +1117,12 @@ function sanitizeAudit(input) {
 
 function scrubIdList(value) {
   return Array.isArray(value) ? value.slice(0, 20).map((x) => String(x).slice(0, 80)) : [];
+}
+
+function scrubNameList(value) {
+  return Array.isArray(value)
+    ? value.slice(0, 20).map((x) => redactText(String(x || "")).slice(0, 120)).filter(Boolean)
+    : [];
 }
 
 function scrubValue(value, key = "") {
@@ -1098,6 +1163,216 @@ async function writeLog(kind, req, event) {
   } catch (err) {
     console.warn(`[audit-log] write failed: ${err.message}`);
   }
+}
+
+async function buildUsageSummary({ days = 7, limit = 200 } = {}) {
+  const entries = await readRecentLogs(days);
+  const aiEntries = entries.filter((e) => e.kind === "ai-usage");
+  const auditEntries = entries.filter((e) => e.kind === "audit");
+  const questionEntries = entries
+    .filter((e) => (e.kind === "ai-usage" && e.question) || e.event === "ai_question_submitted")
+    .sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")));
+
+  const users = new Map();
+  const customers = new Map();
+  const experts = new Map();
+  const questions = questionEntries.slice(0, limit).map((entry) => normalizeQuestionEntry(entry));
+
+  for (const entry of aiEntries) {
+    const userKey = makeUserKey(entry.user);
+    const userRow = ensureMapRow(users, userKey, () => ({
+      key: userKey,
+      user: normalizeUser(entry.user),
+      calls: 0,
+      success: 0,
+      fail: 0,
+      tokens: 0,
+      searches: 0,
+      firstAt: entry.ts || "",
+      lastAt: entry.ts || "",
+    }));
+    userRow.calls += 1;
+    userRow.success += entry.success === false ? 0 : 1;
+    userRow.fail += entry.success === false ? 1 : 0;
+    userRow.tokens += Number(entry.usage?.total_tokens || 0) || 0;
+    userRow.searches += entry.event === "platform_search" ? 1 : 0;
+    userRow.firstAt = minTextDate(userRow.firstAt, entry.ts);
+    userRow.lastAt = maxTextDate(userRow.lastAt, entry.ts);
+
+    const expertKey = entry.expertId || "(none)";
+    const expertRow = ensureMapRow(experts, expertKey, () => ({
+      expertId: expertKey,
+      calls: 0,
+      success: 0,
+      fail: 0,
+      tokens: 0,
+    }));
+    expertRow.calls += 1;
+    expertRow.success += entry.success === false ? 0 : 1;
+    expertRow.fail += entry.success === false ? 1 : 0;
+    expertRow.tokens += Number(entry.usage?.total_tokens || 0) || 0;
+
+    const customerName = primaryCustomerName(entry);
+    if (customerName) {
+      const customerRow = ensureMapRow(customers, customerName, () => ({
+        customerName,
+        calls: 0,
+        users: new Set(),
+        experts: new Set(),
+        tokens: 0,
+        lastQuestion: "",
+        lastAt: "",
+      }));
+      customerRow.calls += 1;
+      customerRow.users.add(userKey);
+      if (entry.expertId) customerRow.experts.add(entry.expertId);
+      customerRow.tokens += Number(entry.usage?.total_tokens || 0) || 0;
+      if (!customerRow.lastAt || String(entry.ts || "") > customerRow.lastAt) {
+        customerRow.lastAt = entry.ts || "";
+        customerRow.lastQuestion = entry.question || "";
+      }
+    }
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    days,
+    storage: {
+      type: "ephemeral-jsonl",
+      note: "Render Free 环境下容器文件可能随重启或重新部署丢失，后续应迁移到数据库或日志服务。",
+    },
+    counts: {
+      audit: auditEntries.length,
+      aiUsage: aiEntries.length,
+      questions: questionEntries.length,
+      users: users.size,
+      customers: customers.size,
+    },
+    users: [...users.values()].sort((a, b) => b.calls - a.calls).slice(0, 80),
+    customers: [...customers.values()]
+      .map((row) => ({
+        ...row,
+        users: row.users.size,
+        experts: [...row.experts],
+        lastQuestion: redactText(row.lastQuestion),
+      }))
+      .sort((a, b) => b.calls - a.calls)
+      .slice(0, 80),
+    experts: [...experts.values()].sort((a, b) => b.calls - a.calls),
+    questions,
+  };
+}
+
+async function readRecentLogs(days) {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  let files = [];
+  try {
+    files = await readdir(LOG_DIR);
+  } catch {
+    return [];
+  }
+  const targets = files
+    .filter((file) => /^(audit|ai-usage|security)-\d{4}-\d{2}-\d{2}\.jsonl$/.test(file))
+    .filter((file) => {
+      const date = file.match(/(\d{4}-\d{2}-\d{2})/)?.[1];
+      return date && new Date(`${date}T23:59:59.999Z`).getTime() >= cutoff;
+    });
+  const entries = [];
+  for (const file of targets) {
+    let text = "";
+    try {
+      text = await readFile(path.join(LOG_DIR, file), "utf8");
+    } catch {
+      continue;
+    }
+    text.split(/\r?\n/).forEach((line) => {
+      if (!line.trim()) return;
+      try {
+        const entry = JSON.parse(line);
+        if (!entry.ts || new Date(entry.ts).getTime() >= cutoff) entries.push(entry);
+      } catch {}
+    });
+  }
+  return entries;
+}
+
+function normalizeQuestionEntry(entry) {
+  const customerName = primaryCustomerName(entry);
+  return {
+    ts: entry.ts || "",
+    event: entry.event || "",
+    kind: entry.path === "/api/platform/search" || entry.event === "platform_search" ? "search" : "chat",
+    success: entry.success !== false,
+    user: normalizeUser(entry.user),
+    expertId: entry.expertId || "",
+    customerName,
+    customerNames: entry.context?.customerNames || [],
+    opportunityNames: entry.context?.opportunityNames || [],
+    question: redactText(entry.question || ""),
+    model: entry.model || "",
+    tokens: Number(entry.usage?.total_tokens || 0) || 0,
+    durationMs: Number(entry.durationMs || 0) || 0,
+    error: entry.error || "",
+  };
+}
+
+function normalizeUser(user = {}) {
+  return {
+    userName: user?.userName || "",
+    account: user?.account || "",
+    enterpriseName: user?.enterpriseName || "",
+    workspaceType: user?.workspaceType || "",
+    role: user?.role || "",
+    inviteCode: user?.inviteCode || "",
+    sourceChannel: user?.sourceChannel || "",
+    campaignName: user?.campaignName || "",
+  };
+}
+
+function makeUserKey(user = {}) {
+  return [user?.account || "(unknown)", user?.userName || "(unknown)", user?.enterpriseName || ""].join("|");
+}
+
+function ensureMapRow(map, key, makeRow) {
+  if (!map.has(key)) map.set(key, makeRow());
+  return map.get(key);
+}
+
+function primaryCustomerName(entry = {}) {
+  const fromContext = Array.isArray(entry.context?.customerNames) ? entry.context.customerNames.find(Boolean) : "";
+  return fromContext || entry.detectedCustomerName || detectCustomerName(entry.question || "");
+}
+
+function detectCustomerName(text) {
+  const value = String(text || "");
+  const patterns = [
+    /(?:客户|拜访|跟进|搜索|分析|会见|见|约见|面谈|沟通)(?:一家|一个|的)?([\u4e00-\u9fa5A-Za-z0-9（）()·]{3,40}(?:公司|集团|医院|学校|大学|果业|科技|委员会|中心|银行|政府|平台|连锁))/,
+    /([\u4e00-\u9fa5A-Za-z0-9（）()·]{3,40}(?:公司|集团|医院|学校|大学|果业|科技|委员会|中心|银行|政府|平台|连锁))/,
+  ];
+  for (const pattern of patterns) {
+    const matched = value.match(pattern)?.[1];
+    if (matched) return redactText(matched).replace(/[，。；、\s]+$/g, "").slice(0, 80);
+  }
+  return "";
+}
+
+function minTextDate(a, b) {
+  if (!a) return b || "";
+  if (!b) return a;
+  return String(a) < String(b) ? a : b;
+}
+
+function maxTextDate(a, b) {
+  if (!a) return b || "";
+  if (!b) return a;
+  return String(a) > String(b) ? a : b;
+}
+
+function safeEqualText(a, b) {
+  const left = Buffer.from(String(a || ""));
+  const right = Buffer.from(String(b || ""));
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
 }
 
 function loadEnvFile(file) {
