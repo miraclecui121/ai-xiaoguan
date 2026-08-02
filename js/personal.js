@@ -52,19 +52,32 @@ const Personal = {
     const acq = Store.getAcquisition ? Store.getAcquisition() : {};
     const currentUser = Store.currentUser ? Store.currentUser() : null;
     const isWechat = ['wechat_mock','wechat_oauth'].includes(currentUser?.identityProvider);
+    if(!hasLogin || !isWechat){
+      Modal.open({
+        title: '先微信授权登录',
+        size: 'sm',
+        body: `
+        <div class="activation-panel">
+          <div class="activation-note">
+            <div class="activation-note-title">个人体验版需要绑定微信身份</div>
+            <div class="activation-note-desc">这样你在手机微信端和 PC 端都能进入同一个销售空间，对话记录和客户数据后续也能按同一身份沉淀。</div>
+          </div>
+        </div>`,
+        footer: `<button class="btn btn-ghost" onclick="Modal.close()">取消</button><button class="btn btn-primary" onclick="Modal.close();Auth.loginWithWechat()">微信授权登录</button>`
+      });
+      return;
+    }
     const defaultName = isWechat ? (currentUser.name || '微信体验用户') : '';
     const defaultAccount = isWechat ? (currentUser.account || '') : '';
-    const passwordField = isWechat
-      ? `<div class="activation-note-inline">当前为微信体验用户，正式上线后将沿用微信授权登录；本机无需再设置密码。</div>`
-      : `<div class="form-row"><label class="form-label">登录密码 <span class="req">*</span></label><input type="password" class="form-input" id="actPassword" placeholder="至少4位"></div>`;
+    const passwordField = `<div class="activation-note-inline">当前已绑定微信身份，后续使用同一微信登录；无需再设置登录密码。</div>`;
     Modal.open({
       title: '邀请码开通个人版',
       size: 'md',
       body: `
       <div class="activation-panel">
-        <div class="activation-note">
+          <div class="activation-note">
           <div class="activation-note-title">开通后你会获得一个独立的个人销售空间</div>
-          <div class="activation-note-desc">演示数据会保留用于体验；你的客户、联系人、商机、跟进记录会进入个人空间，AI专家将优先读取你的真实数据。建议先微信授权再开通，这样 PC 和手机端都能使用同一空间。</div>
+          <div class="activation-note-desc">演示数据会保留用于体验；你的客户、联系人、商机、跟进记录会进入个人空间，AI专家将优先读取你的真实数据。个人空间会绑定当前微信身份，PC 和手机端都使用同一空间。</div>
         </div>
         <div class="form-row"><label class="form-label">开通原因</label><input class="form-input" value="${Utils.esc(reason)}" disabled></div>
         <div class="form-grid-2">
@@ -89,6 +102,15 @@ const Personal = {
     const account = document.getElementById('actAccount')?.value.trim();
     const currentUser = Store.currentUser ? Store.currentUser() : null;
     const isWechat = ['wechat_mock','wechat_oauth'].includes(currentUser?.identityProvider);
+    if(!Store.isLoggedIn() || !isWechat){
+      if(err){
+        err.textContent = '请先使用微信授权登录，再输入邀请码开通个人体验版。';
+        err.style.display = 'block';
+      }else{
+        Toast.show('请先使用微信授权登录，再输入邀请码开通个人体验版。', 'error');
+      }
+      return;
+    }
     const password = document.getElementById('actPassword')?.value.trim() || (isWechat ? 'wechat_auth' : '');
     const code = document.getElementById('actCode')?.value.trim();
     if(err) err.style.display = 'none';

@@ -60,6 +60,7 @@ const Auth = {
   renderLogin(){
     const box = document.getElementById('loginBox');
     const isApi = Store.mode === 'api';
+    const showAccountBackup = Auth.isLocalHost();
     if(!isApi){
       Auth.normalizeLoginEnterprises();
     }
@@ -86,33 +87,32 @@ const Auth = {
           </button>
           ${inviteHint}
         </div>
-        <div class="login-divider"><span>账号登录备用</span></div>
-        <div class="login-field">
-          <label class="login-label">选择企业</label>
-          <select class="login-input" id="loginEntId">
-            <option value="">— 请选择企业 —</option>
-            ${Auth.renderEnterpriseOptions()}
-          </select>
-        </div>
-        <div class="login-field">
-          <label class="login-label">账号</label>
-          <input type="text" class="login-input" id="loginAccount" placeholder="输入登录账号" onkeydown="if(event.key==='Enter')document.getElementById('loginPassword').focus()">
-        </div>
-        <div class="login-field">
-          <label class="login-label">密码</label>
-          <input type="password" class="login-input" id="loginPassword" placeholder="输入密码" onkeydown="if(event.key==='Enter')Auth.doLogin()">
-        </div>
-        <div id="loginError" class="login-error" style="display:none"></div>
-        <button class="login-btn" id="loginBtn" onclick="Auth.doLogin()">登 录</button>
-
         <div class="login-demo-hint">
-          ${isApi ? '<div class="login-hint-title">已开通企业账号</div><div class="login-hint-item">选择企业 → 输入账号密码登录</div>' : `
-          <div class="login-hint-title">先体验，再用邀请码开通个人空间</div>
-          <button class="login-hint-item login-demo-account" onclick="Auth.fillDemoAccount('ent_001','sales1','123456')" type="button"><span class="badge badge-gold">演示体验</span> <code>星瀚增长 / sales1</code> — 默认演示数据</button>
-          <button class="login-hint-item login-demo-account" onclick="Personal.openActivation('开通个人正式空间')" type="button"><span class="badge badge-green">个人版</span> 输入邀请码开通 — 不必使用专属链接</button>
-          <button class="login-hint-item login-demo-account" onclick="Auth.fillDemoAccount('ent_001','admin','admin')" type="button"><span class="badge badge-gray">管理演示</span> <code>admin / admin</code> — 企业管理员</button>
-          `}
+          <div class="login-hint-title">首次登录后进入演示空间</div>
+          <div class="login-hint-item"><span class="badge badge-gold">演示体验</span> 默认演示数据 · 可体验 10 个销售分析视角</div>
+          <button class="login-hint-item login-demo-account" onclick="Auth.loginWithWechat()" type="button"><span class="badge badge-green">个人版</span> 微信登录后输入邀请码开通 · PC/手机同一空间</button>
+          <div class="login-hint-item"><span class="badge badge-gray">切换微信</span> 退出当前身份后，用另一个微信重新授权</div>
         </div>
+        ${showAccountBackup ? `
+          <div class="login-divider"><span>本机开发备用账号</span></div>
+          <div class="login-field">
+            <label class="login-label">选择企业</label>
+            <select class="login-input" id="loginEntId">
+              <option value="">— 请选择企业 —</option>
+              ${Auth.renderEnterpriseOptions()}
+            </select>
+          </div>
+          <div class="login-field">
+            <label class="login-label">账号</label>
+            <input type="text" class="login-input" id="loginAccount" placeholder="输入登录账号" onkeydown="if(event.key==='Enter')document.getElementById('loginPassword').focus()">
+          </div>
+          <div class="login-field">
+            <label class="login-label">密码</label>
+            <input type="password" class="login-input" id="loginPassword" placeholder="输入密码" onkeydown="if(event.key==='Enter')Auth.doLogin()">
+          </div>
+        ` : ''}
+        <div id="loginError" class="login-error" style="display:none"></div>
+        ${showAccountBackup ? `<button class="login-btn" id="loginBtn" onclick="Auth.doLogin()">备用账号登录</button>` : ''}
       </div>
 
       <div id="registerFormPanel" style="display:none">

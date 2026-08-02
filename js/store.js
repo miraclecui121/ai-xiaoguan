@@ -215,11 +215,6 @@ const Store = {
         Store.cloud.restored = true;
         return { ok:true, restored:true, updatedAt:data.data.updatedAt || '' };
       }
-      const migrated = await Store.bindLocalPersonalWorkspaceToWechat(profile);
-      if(migrated?.ok){
-        Store.cloud.restored = true;
-        return { ok:true, restored:true, migrated:true, enterpriseId:migrated.enterpriseId };
-      }
       Store.cloud.restored = true;
       Store.queueCloudSync('init-empty-cloud');
       return { ok:true, restored:false };
@@ -262,46 +257,6 @@ const Store = {
     }finally{
       Store._applyingCloud = false;
     }
-  },
-  findLocalPersonalWorkspaceForWechat(profile={}){
-    const externalId = String(profile.externalId || Store.cloud.externalId || '').trim();
-    const personalEnts = Store.collection('enterprises')
-      .filter(e=>e.workspaceType==='personal')
-      .sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));
-    for(const ent of personalEnts){
-      const users = Store.collection('users').filter(u=>u.enterpriseId===ent.id && u.status!=='disabled');
-      const sameWechat = users.find(u=>u.identityProvider==='wechat_oauth' && u.externalId===externalId);
-      if(sameWechat) return { ent, user:sameWechat, alreadyBound:true };
-      const unbound = users.find(u=>u.role==='admin' && (!u.externalId || u.identityProvider!=='wechat_oauth')) ||
-        users.find(u=>!u.externalId || u.identityProvider!=='wechat_oauth');
-      if(unbound) return { ent, user:unbound, alreadyBound:false };
-    }
-    return null;
-  },
-  async bindLocalPersonalWorkspaceToWechat(profile={}){
-    const externalId = String(profile.externalId || Store.cloud.externalId || '').trim();
-    if(!externalId) return { ok:false, reason:'missing_external_id' };
-    const candidate = Store.findLocalPersonalWorkspaceForWechat(profile);
-    if(!candidate) return { ok:false, reason:'no_local_personal_workspace' };
-    const { ent, user } = candidate;
-    const nickname = String(profile.nickname || user.name || '微信用户').trim().slice(0,30) || user.name || '微信用户';
-    Store.update('users', user.id, {
-      name: user.name || nickname,
-      account: user.account || `wx_${externalId.replace(/[^A-Za-z0-9]/g,'').slice(-10)}`,
-      password: '',
-      avatar: user.avatar || '微',
-      identityProvider:'wechat_oauth',
-      externalId,
-      sourceChannel: user.sourceChannel || profile.sourceChannel || '微信授权',
-      campaignName: user.campaignName || profile.campaignName || '',
-      inviteCode: user.inviteCode || ent.inviteCode || profile.inviteCode || '',
-      lastLoginAt: Utils.now(),
-    });
-    Store.session = { enterpriseId:ent.id, userId:user.id, loginAt:Utils.now(), authProvider:'wechat_oauth' };
-    Store.saveSession();
-    Store.save();
-    await Store.flushCloudWorkspace('bind-local-personal-workspace');
-    return { ok:true, enterpriseId:ent.id, userId:user.id, alreadyBound:candidate.alreadyBound };
   },
   cloudWorkspaceSnapshot(){
     const clone = JSON.parse(JSON.stringify(Store.db || {}));
@@ -713,6 +668,11 @@ const Store = {
   },
   activatePersonalWorkspace({ code, name, account, password, phone, sourceChannel, campaignName }){
     if(Store.mode==='api') throw new Error('云端模式请调用后端邀请码接口开通');
+    const current = Store.currentUser();
+    const isWechatUser = ['wechat_oauth','wechat_mock'].includes(current?.identityProvider);
+    if(!isWechatUser){
+      throw new Error('请先使用微信授权登录，再输入邀请码开通个人体验版。');
+    }
     const check = Store.validateInviteCode(code);
     if(!check.ok) throw new Error(check.message);
     name = String(name||'').trim();
@@ -720,8 +680,8 @@ const Store = {
     password = String(password||'').trim();
     phone = String(phone||'').trim();
     if(!name) throw new Error('请填写姓名');
-    if(!account) throw new Error('请填写登录账号');
-    if(!password || password.length<4) throw new Error('登录密码至少4位');
+    if(!account) account = current.account || `wx_${String(current.externalId||Date.now()).replace(/[^A-Za-z0-9]/g,'').slice(-10)}`;
+    if(!isWechatUser && (!password || password.length<4)) throw new Error('登录密码至少4位');
 
     const invite = check.item;
     const acq = Store.getAcquisition();
@@ -778,8 +738,8 @@ const Store = {
       title: '个人用户',
       status: 'active',
       avatar: name.charAt(0),
-      identityProvider: Store.currentUser()?.identityProvider || 'account',
-      externalId: Store.currentUser()?.externalId || '',
+      identityProvider: current.identityProvider,
+      externalId: current.externalId || '',
       inviteCode: invite.code,
       sourceChannel: sourceChannel || invite.sourceChannel || acq.sourceChannel || '',
       campaignName: campaignName || invite.campaignName || acq.campaignName || '',
@@ -809,7 +769,7 @@ const Store = {
       enterpriseId: entId,
       userId,
       loginAt: Utils.now(),
-      authProvider: Store.currentUser()?.identityProvider === 'wechat_oauth' ? 'wechat_oauth' : (Store.currentUser()?.identityProvider || 'account'),
+      authProvider: current.identityProvider,
     };
     Store.saveSession();
     Store.save();
