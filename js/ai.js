@@ -661,8 +661,8 @@ const AI = {
     const openOpps=Store.opportunities().filter(o=>o.status==='open');
     const atRisk=openOpps.filter(o=>o.competition==='behind'||(o.winProbability||0)<40).length;
     const sleepCustomers=Store.myCustomers().filter(c=>{
-      const last=Store.lastFollowup(f=>f.customerId===c.id);
-      return !last||Utils.daysSince(last.at)>14;
+      const state=Store.customerFollowupState ? Store.customerFollowupState(c) : null;
+      return state?.needsAlert && state.days>14;
     }).length;
     return `
     <div class="ai-insight">
@@ -678,7 +678,7 @@ const AI = {
       <h4>⚠️ 风险预警</h4>
       <div style="font-size:13px;line-height:2">
         <span class="badge badge-red">${atRisk}</span> 个商机竞争落后/赢单率低<br>
-        <span class="badge badge-orange">${sleepCustomers}</span> 个客户超14天未跟进<br>
+        <span class="badge badge-orange">${sleepCustomers}</span> 个客户需补跟进<br>
         <span class="badge badge-orange">${Store.schedules().filter(s=>!s.done&&new Date(s.startAt)<new Date()).length}</span> 个日程已逾期<br>
         <a style="color:var(--primary);cursor:pointer;font-size:12px;text-decoration:underline" onclick="App.navigate('alerts')">查看预警中心 →</a>
       </div>
@@ -712,8 +712,16 @@ const AI = {
     const biz=openOpps.filter(o=>o.stage===3).sort((a,b)=>b.amount-a.amount)[0];
     if(biz)tips.push(`「${biz.name}」处于商务阶段，金额${Utils.fmtMoney(biz.amount)}，建议重点推进签约`);
     // 沉睡客户
-    const sleep=Store.myCustomers().find(c=>{const l=Store.lastFollowup(f=>f.customerId===c.id);return !l||Utils.daysSince(l.at)>14;});
-    if(sleep)tips.push(`客户「${sleep.name}」超14天未跟进，建议尽快联系`);
+    const sleep=Store.myCustomers().find(c=>{
+      const state=Store.customerFollowupState ? Store.customerFollowupState(c) : null;
+      return state?.needsAlert && state.days>14;
+    });
+    if(sleep){
+      const state=Store.customerFollowupState(sleep);
+      tips.push(state.hasFollowup
+        ? `客户「${sleep.name}」${state.days}天未跟进，建议尽快联系`
+        : `客户「${sleep.name}」新建${state.days}天尚未首次跟进，建议补一次沟通记录`);
+    }
     // 待办日程
     const overdueSch=Store.schedules().filter(s=>!s.done&&new Date(s.startAt)<new Date());
     if(overdueSch.length)tips.push(`有 ${overdueSch.length} 个日程已逾期，建议尽快处理或重新安排`);
@@ -1705,19 +1713,19 @@ ${gate.slice(0,5).map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
 
   sleepCustomers(){
     const list=Store.myCustomers().map(c=>{
-      const last=Store.lastFollowup(f=>f.customerId===c.id);
-      const days=last?Utils.daysSince(last.at):999;
+      const state=Store.customerFollowupState ? Store.customerFollowupState(c) : null;
       const opps=Store.oppsByCustomer(c.id);
       const oppAmt=Utils.sum(opps,'amount');
-      return {c,days,opps,oppAmt};
-    }).filter(x=>x.days>14).sort((a,b)=>b.days-a.days);
-    if(!list.length)return `✅ 所有客户跟进及时，无沉睡客户。`;
-    let html=`😴 **沉睡客户提醒**（超14天未跟进，共${list.length}个）\n\n`;
+      return {c,days:state?.days||0,state,opps,oppAmt};
+    }).filter(x=>x.state?.needsAlert && x.days>14).sort((a,b)=>b.days-a.days);
+    if(!list.length)return `✅ 当前没有超过14天未跟进的客户。新建7天内且尚未跟进的客户，不会被判为流失风险。`;
+    let html=`**客户跟进提醒**（超过14天未跟进或未首次跟进，共${list.length}个）\n\n`;
     list.slice(0,8).forEach(x=>{
       const risk=x.opps.length?'有商机在跟':'无活跃商机';
-      html+=`• **${x.c.name}**（${x.c.level}级）- ${x.days}天未跟进 ｜ 商机${x.opps.length}个/${Utils.fmtMoney(x.oppAmt)} ｜ ${risk}\n`;
+      const label=x.state?.hasFollowup ? `${x.days}天未跟进` : `新建${x.days}天未首次跟进`;
+      html+=`• **${x.c.name}**（${x.c.level}级）- ${label} ｜ 商机${x.opps.length}个/${Utils.fmtMoney(x.oppAmt)} ｜ ${risk}\n`;
     });
-    html+=`\n💡 建议：立即安排S/A级客户回访，避免客户流失与商机冷场。`;
+    html+=`\n💡 建议：优先补齐S/A级客户和有进行中商机客户的下一步沟通记录。`;
     return html;
   },
 
@@ -2423,7 +2431,8 @@ _报告基于CRM系统截至2026年7月18日存量数据生成。保护期倒计
     const againstContacts=contacts.filter(x=>x.attitude==='反对');
     const openOpps=opps.filter(o=>o.status==='open');
     const behindOpps=opps.filter(o=>o.competition==='behind');
-    const daysSince=lastFu?Utils.daysSince(lastFu.at):999;
+    const followupState=Store.customerFollowupState ? Store.customerFollowupState(c) : null;
+    const daysSince=followupState?.days ?? 0;
 
     // 健康度评分
     let health=50;
@@ -2436,8 +2445,8 @@ _报告基于CRM系统截至2026年7月18日存量数据生成。保护期倒计
     if(againstContacts.length>0){health-=10;factors.push('有反对者(-10)');}
     if(openOpps.length>0){health+=5;factors.push('有活跃商机(+5)');}
     if(behindOpps.length>0){health-=10;factors.push('有竞争落后商机(-10)');}
-    if(daysSince<=7){health+=5;factors.push('跟进及时(+5)');}
-    else if(daysSince>14){health-=10;factors.push('跟进滞后(-10)');}
+    if(followupState?.hasFollowup && daysSince<=7){health+=5;factors.push('跟进及时(+5)');}
+    else if(followupState?.needsAlert && daysSince>14){health-=10;factors.push(followupState.hasFollowup?'跟进滞后(-10)':'未首次跟进(-10)');}
     if(c.status==='lost'){health-=20;factors.push('已流失客户(-20)');}
     health=Math.max(0,Math.min(100,health));
     const healthLabel=health>=70?'🟢 健康':health>=45?'🟡 一般':'🔴 风险';
@@ -2475,7 +2484,11 @@ _报告基于CRM系统截至2026年7月18日存量数据生成。保护期倒计
 
     html+=`\n## 四、风险预警\n\n`;
     const risks=[];
-    if(daysSince>14)risks.push(`🔴 ${daysSince}天未跟进，客户流失风险高`);
+    if(followupState?.needsAlert && daysSince>14){
+      risks.push(followupState.hasFollowup
+        ? `🔴 ${daysSince}天未跟进，客户流失风险升高`
+        : `🟡 新建${daysSince}天尚未首次跟进，需补齐沟通记录`);
+    }
     if(keyContacts.length===0)risks.push(`🔴 缺少关键决策人联系人`);
     if(behindOpps.length)risks.push(`🔴 ${behindOpps.length}个商机竞争落后`);
     if(c.status==='idle')risks.push(`🟡 客户状态为"停滞"，需激活`);
@@ -2487,7 +2500,9 @@ _报告基于CRM系统截至2026年7月18日存量数据生成。保护期倒计
 
     html+=`\n## 五、赢单策略建议\n\n`;
     const strategies=[];
-    if(daysSince>14)strategies.push(`立即安排回访，${c.level}级客户不可长期失联`);
+    if(followupState?.needsAlert && daysSince>14)strategies.push(followupState.hasFollowup
+      ? `立即安排回访，${c.level}级客户不可长期失联`
+      : `尽快完成首次沟通，明确客户需求、关键人和下一步动作`);
     if(keyContacts.length===0)strategies.push(`通过现有联系人向上拓展，建立决策层关系`);
     if(behindOpps.length)strategies.push(`竞争落后商机需制定差异化突破策略，寻找友商薄弱环节`);
     if(openOpps.length>0){

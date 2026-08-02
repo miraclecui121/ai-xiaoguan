@@ -1318,7 +1318,40 @@ const Store = {
   followupsByOpp(oid){ return Store.followups().filter(f=>f.opportunityId===oid); },
   lastFollowup(filterFn){
     const arr = Store.followups().filter(filterFn||(()=>true));
+    arr.sort((a,b)=>new Date(b.at||b.createdAt||0)-new Date(a.at||a.createdAt||0));
     return arr.length?arr[0]:null;
+  },
+  customerFollowupState(c){
+    const lastFu=Store.lastFollowup(f=>f.customerId===c.id);
+    const opps=Store.oppsByCustomer(c.id).filter(o=>o.status==='open');
+    if(lastFu){
+      const days=Math.max(0, Utils.daysSince(lastFu.at)||0);
+      if(days<=14) return { needsAlert:false, hasFollowup:true, lastFu, days, opps };
+      const severity=days>30?'high':days>21?'mid':'low';
+      return {
+        needsAlert:true, hasFollowup:true, lastFu, days, opps,
+        type:'customer-churn',
+        severity,
+        title:days>30?`客户流失风险：${c.name}`:`客户跟进滞后：${c.name}`,
+        desc:`${days}天未跟进${opps.length?`，有${opps.length}个进行中商机`:''}`,
+        icon:'访',
+        cls:severity==='high'?'badge-red':'badge-orange',
+        metricLabel:'天未跟进',
+      };
+    }
+    const age=Math.max(0, Utils.daysSince(c.createdAt||c.updatedAt)||0);
+    if(age<=7) return { needsAlert:false, hasFollowup:false, days:age, age, opps };
+    const severity=age>30?'high':age>14?'mid':'low';
+    return {
+      needsAlert:true, hasFollowup:false, days:age, age, opps,
+      type:'customer-first-followup',
+      severity,
+      title:`待首次跟进：${c.name}`,
+      desc:`新建${age}天，尚未记录首次跟进${opps.length?`，有${opps.length}个进行中商机`:''}`,
+      icon:'访',
+      cls:severity==='high'?'badge-red':'badge-orange',
+      metricLabel:'天未跟进',
+    };
   },
 
   // ===== 日程（按企业隔离）=====
@@ -1584,22 +1617,20 @@ const Store = {
           title:`商机停滞：${o.name}`,
           desc:`已${days}天未推进（上次更新${Utils.fmtDate(o.updatedAt)}）`,
           days, entityType:'opportunity', entityId:o.id,
-          icon:'⚠️', cls:'badge-orange',
+          icon:'⚠️', cls:'badge-orange', metricLabel:'天未推进',
         });
       }
     });
 
     Store.myCustomers().forEach(c=>{
-      const lastFu=Store.lastFollowup(f=>f.customerId===c.id);
-      const days=lastFu?Utils.daysSince(lastFu.at):999;
-      if(days>14){
-        const opps=Store.oppsByCustomer(c.id).filter(o=>o.status==='open');
+      const state=Store.customerFollowupState(c);
+      if(state.needsAlert){
         alerts.push({
-          type:'customer-churn', severity: days>30?'high':days>21?'mid':'low',
-          title:`客户流失风险：${c.name}`,
-          desc:`${days}天未跟进${opps.length?`，有${opps.length}个进行中商机`:''}`,
-          days, entityType:'customer', entityId:c.id,
-          icon:'😴', cls:days>30?'badge-red':'badge-orange',
+          type:state.type, severity:state.severity,
+          title:state.title,
+          desc:state.desc,
+          days:state.days, entityType:'customer', entityId:c.id,
+          icon:state.icon, cls:state.cls, metricLabel:state.metricLabel,
         });
       }
     });
@@ -1612,7 +1643,7 @@ const Store = {
           title:`签约逾期：${o.name}`,
           desc:`预计签约日${Utils.fmtDate(o.expectedSignDate)}已过${days}天`,
           days, entityType:'opportunity', entityId:o.id,
-          icon:'📅', cls:'badge-red',
+          icon:'📅', cls:'badge-red', metricLabel:'天逾期',
         });
       }
     });
@@ -1624,7 +1655,7 @@ const Store = {
         title:`日程逾期：${s.title}`,
         desc:`计划于${Utils.fmtDateTime(s.startAt)}，已逾期${days}天`,
         days, entityType:'schedule', entityId:s.id,
-        icon:'🔔', cls:days>3?'badge-red':'badge-orange',
+        icon:'🔔', cls:days>3?'badge-red':'badge-orange', metricLabel:'天逾期',
       });
     });
 

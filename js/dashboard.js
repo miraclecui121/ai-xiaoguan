@@ -641,7 +641,8 @@ const Dashboard = {
     // 按类型分组
     const typeMap={
       'opp-stagnant':{label:'商机停滞',icon:'⚠️',cls:'badge-orange'},
-      'customer-churn':{label:'客户流失',icon:'😴',cls:'badge-red'},
+      'customer-churn':{label:'跟进滞后',icon:'访',cls:'badge-red'},
+      'customer-first-followup':{label:'首次跟进',icon:'访',cls:'badge-orange'},
       'sign-overdue':{label:'签约逾期',icon:'📅',cls:'badge-red'},
       'schedule-overdue':{label:'日程逾期',icon:'🔔',cls:'badge-orange'},
       'protect-expire':{label:'保护期到期',icon:'🛡️',cls:'badge-orange'},
@@ -703,7 +704,7 @@ const Dashboard = {
         </div>
         <div style="text-align:right">
           <div style="font-size:18px;font-weight:700;color:${sevColor}">${Math.abs(a.days)}</div>
-          <div style="font-size:10px;color:var(--text-3)">${a.days<0?'天前':'天后'}</div>
+          <div style="font-size:10px;color:var(--text-3)">${a.metricLabel || (a.days<0?'天前':'天后')}</div>
         </div>
       </div>`;
     });

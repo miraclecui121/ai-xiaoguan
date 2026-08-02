@@ -1318,12 +1318,13 @@ const Experts = {
     // 四、合作关系评估
     html+=`## 四、合作关系评估\n\n`;
     let relScore=50;const rf=[];
-    const lastFu=fus[0];
-    const daysSince=lastFu?Utils.daysSince(lastFu.at):999;
-    if(daysSince<=7){relScore+=15;rf.push('跟进及时(+15)');}
-    else if(daysSince<=14){relScore+=8;rf.push('跟进正常(+8)');}
-    else if(daysSince>30){relScore-=20;rf.push('跟进严重滞后(-20)');}
-    else{relScore-=10;rf.push('跟进滞后(-10)');}
+    const followupState=Store.customerFollowupState ? Store.customerFollowupState(c) : null;
+    const daysSince=followupState?.days ?? 0;
+    if(followupState?.hasFollowup && daysSince<=7){relScore+=15;rf.push('跟进及时(+15)');}
+    else if(followupState?.hasFollowup && daysSince<=14){relScore+=8;rf.push('跟进正常(+8)');}
+    else if(followupState?.needsAlert && daysSince>30){relScore-=20;rf.push(followupState.hasFollowup?'跟进严重滞后(-20)':'长期未首次跟进(-20)');}
+    else if(followupState?.needsAlert){relScore-=10;rf.push(followupState.hasFollowup?'跟进滞后(-10)':'待首次跟进(-10)');}
+    else if(!followupState?.hasFollowup){rf.push('新客户观察期(0)');}
     if(keyContacts.length>=2){relScore+=12;rf.push('关键人充足(+12)');}
     else if(keyContacts.length===0){relScore-=15;rf.push('缺关键人(-15)');}
     if(supportContacts.length>=2){relScore+=10;rf.push('支持者多(+10)');}
@@ -1370,7 +1371,7 @@ const Experts = {
     html+=`## 八、关键任务\n\n`;
     html+=`| 序号 | 关键任务 | 负责人 | 时间 | 优先级 |\n|------|----------|--------|------|--------|\n`;
     const tasks=[];
-    if(daysSince>14) tasks.push(['安排客户拜访/高层会晤','林经理','本周','🔴 P0']);
+    if(followupState?.needsAlert && daysSince>14) tasks.push([followupState.hasFollowup?'安排客户拜访/高层会晤':'完成首次客户沟通并记录','林经理','本周','🔴 P0']);
     if(keyContacts.length<2) tasks.push(['拓展决策层关键人关系','林经理','2周内','🟡 P1']);
     if(openOpps.length>0) tasks.push(['加速在跟商机推进','林经理','持续','🔴 P0']);
     if(wonOpps.length>0&&openOpps.length===0) tasks.push(['挖掘新需求/二期项目','林经理','1月内','🟡 P1']);
