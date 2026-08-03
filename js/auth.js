@@ -53,6 +53,8 @@ const Auth = {
       if(nameEl) nameEl.textContent = user.name;
       const entMenu = document.getElementById('entMenuGroup');
       if(entMenu) entMenu.style.display = Store.isAdmin() && !Store.isPersonalWorkspace() ? '' : 'none';
+      const opsLogMenu = document.getElementById('opsLogMenuItem');
+      if(opsLogMenu) opsLogMenu.style.display = Store.canManageInvites && Store.canManageInvites() ? '' : 'none';
     }
     // 刷新铃铛
     App.refreshNotifBadge();

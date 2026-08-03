@@ -17,7 +17,8 @@ const App = {
     'enterprise-info': ()=>Enterprise.renderInfo(),
     'enterprise-org': ()=>Enterprise.renderOrg(),
     'enterprise-users': ()=>Enterprise.renderUsers(),
-    settings: ()=>App.renderSettings()
+    settings: ()=>App.renderSettings(),
+    'ops-logs': ()=>App.renderOpsLogs()
   },
 
   async init(){
@@ -50,6 +51,10 @@ const App = {
     // 企业管理页面需要管理员权限
     if(route.startsWith('enterprise-') && !Store.isAdmin()){
       Toast.show('仅企业管理员可访问','error');
+      return;
+    }
+    if(route==='ops-logs' && (!Store.canManageInvites || !Store.canManageInvites())){
+      Toast.show('仅平台管理员可访问运营日志','error');
       return;
     }
     App.currentRoute = route;
@@ -586,6 +591,271 @@ const App = {
     }catch(e){
       return String(ts);
     }
+  },
+
+  opsLogTab: 'overview',
+  opsLogDetail: null,
+
+  renderOpsLogs(){
+    if(!Store.canManageInvites || !Store.canManageInvites()){
+      return `<div class="empty">仅平台管理员可查看运营日志。</div>`;
+    }
+    const savedToken = localStorage.getItem('aixg_admin_log_token') || '';
+    const detail = App.opsLogDetail || null;
+    return `
+    <div class="page-header">
+      <div>
+        <h1><span class="page-icon">志</span>运营日志</h1>
+        <p>把登录、邀请码、问题、专家调用、联网检索、额度消耗和实体识别分开看，用来判断用户使用质量。</p>
+      </div>
+      <button class="btn btn-primary" onclick="App.loadOpsUsageDetail()">刷新</button>
+    </div>
+    <div class="card ops-log-card">
+      <div class="admin-log-toolbar ops-log-toolbar">
+        <input class="form-input" id="opsLogToken" type="password" value="${Utils.esc(savedToken)}" placeholder="输入 ADMIN_LOG_TOKEN 查询口令">
+        <select class="form-input" id="opsLogDays">
+          <option value="1">近 1 天</option>
+          <option value="7" selected>近 7 天</option>
+          <option value="30">近 30 天</option>
+        </select>
+        <input class="form-input" id="opsLogQuery" value="${Utils.esc(detail?.query || '')}" placeholder="筛选用户/客户/问题/邀请码">
+        <button class="btn btn-primary" onclick="App.loadOpsUsageDetail()">查询</button>
+        <button class="btn btn-ghost" onclick="App.clearOpsUsageDetail()">清空</button>
+      </div>
+      <div id="opsLogDetail">${App.renderOpsLogDetail(detail)}</div>
+    </div>`;
+  },
+
+  renderOpsLogDetail(detail){
+    if(!detail){
+      return `<div class="admin-log-empty">输入查询口令后，可查看谁登录、谁开通邀请码、问了什么、用了哪个专家、是否联网、消耗多少额度，以及识别出的客户/公司/地区/产品。</div>`;
+    }
+    const tabs = [
+      ['overview','概览'],
+      ['logins','登录'],
+      ['invites','邀请码'],
+      ['questions','问题'],
+      ['experts','专家/联网'],
+      ['entities','实体识别'],
+    ];
+    const active = App.opsLogTab || 'overview';
+    return `
+      <div class="ops-log-meta">生成时间：${Utils.esc(App.formatAdminLogTime(detail.generatedAt))} · 存储：${Utils.esc(detail.storage?.type || '')} · 范围：近 ${Number(detail.days||0)} 天</div>
+      <div class="ops-log-tabs">
+        ${tabs.map(([id,label])=>`<button class="${active===id?'active':''}" onclick="App.setOpsLogTab('${id}')">${label}</button>`).join('')}
+      </div>
+      <div class="ops-log-panel">${App.renderOpsLogTab(detail, active)}</div>
+    `;
+  },
+
+  renderOpsLogTab(detail, tab){
+    if(tab==='logins') return App.renderOpsLoginTab(detail);
+    if(tab==='invites') return App.renderOpsInviteTab(detail);
+    if(tab==='questions') return App.renderOpsQuestionTab(detail);
+    if(tab==='experts') return App.renderOpsExpertTab(detail);
+    if(tab==='entities') return App.renderOpsEntityTab(detail);
+    return App.renderOpsOverviewTab(detail);
+  },
+
+  renderOpsOverviewTab(detail){
+    const c = detail.counts || {};
+    const stat = [
+      ['登录事件', c.logins || 0],
+      ['问题记录', c.questions || 0],
+      ['AI调用', c.aiCalls || 0],
+      ['联网检索', c.searches || 0],
+      ['活跃用户', c.users || 0],
+      ['客户', c.customers || 0],
+      ['公司', c.companies || 0],
+      ['地区/产品', `${Number(c.regions||0)}/${Number(c.products||0)}`],
+    ];
+    const userRows = (detail.users || []).slice(0,12).map(row=>`
+      <tr>
+        <td>${Utils.esc(row.user?.userName || '未知')}<small>${Utils.esc(row.user?.account || '')}</small></td>
+        <td>${Utils.esc(row.user?.enterpriseName || '—')}<small>${Utils.esc(row.user?.workspaceType || '')}${row.inviteCode ? ` · ${Utils.esc(row.inviteCode)}` : ''}</small></td>
+        <td>${Number(row.logins||0)}</td>
+        <td>${Number(row.questions||0)}</td>
+        <td>${Number(row.aiCalls||0)} / ${Number(row.searches||0)}</td>
+        <td>${Number(row.tokens||0).toLocaleString()}</td>
+        <td>${Utils.esc(App.formatAdminLogTime(row.lastAt))}</td>
+      </tr>`).join('') || `<tr><td colspan="7" class="empty">暂无用户记录</td></tr>`;
+    const workspaceRows = (detail.workspaceUsers || []).slice(0,8).map(row=>`
+      <tr>
+        <td>${Utils.esc(row.nickname || '微信用户')}<small>${Utils.esc(row.externalId || '')}</small></td>
+        <td>${Utils.esc(row.inviteCode || '—')}<small>${Utils.esc(row.sourceChannel || '')} ${Utils.esc(row.campaignName || '')}</small></td>
+        <td>${Number(row.workspaceVersion||0)}</td>
+        <td>${Utils.esc(App.formatAdminLogTime(row.updatedAt))}</td>
+      </tr>`).join('') || `<tr><td colspan="4" class="empty">暂无云端个人空间</td></tr>`;
+    return `
+      <div class="admin-log-stats ops-log-stats">
+        ${stat.map(([label,value])=>`<div><b>${Utils.esc(value)}</b><span>${Utils.esc(label)}</span></div>`).join('')}
+      </div>
+      <div class="admin-log-grid">
+        <div>
+          <h4>用户使用质量</h4>
+          <table class="data-table compact-table"><thead><tr><th>用户</th><th>空间</th><th>登录</th><th>问题</th><th>AI/联网</th><th>Token</th><th>最近</th></tr></thead><tbody>${userRows}</tbody></table>
+        </div>
+        <div>
+          <h4>已同步个人空间</h4>
+          <table class="data-table compact-table"><thead><tr><th>微信身份</th><th>邀请码/来源</th><th>版本</th><th>最近同步</th></tr></thead><tbody>${workspaceRows}</tbody></table>
+        </div>
+      </div>`;
+  },
+
+  renderOpsLoginTab(detail){
+    const rows = (detail.logins || []).map(row=>`
+      <tr>
+        <td>${Utils.esc(App.formatAdminLogTime(row.ts))}</td>
+        <td>${Utils.esc(App.opsEventLabel(row.event))}<small>${Utils.esc(row.result || row.action || '')}</small></td>
+        <td>${Utils.esc(row.user?.userName || '未知')}<small>${Utils.esc(row.user?.account || '')}</small></td>
+        <td>${Utils.esc(row.user?.enterpriseName || '—')}<small>${Utils.esc(row.user?.workspaceType || '')}</small></td>
+        <td>${Utils.esc(row.inviteCode || row.user?.inviteCode || '—')}<small>${Utils.esc(row.sourceChannel || '')} ${Utils.esc(row.campaignName || '')}</small></td>
+      </tr>`).join('') || `<tr><td colspan="5" class="empty">暂无登录记录</td></tr>`;
+    return `<table class="data-table compact-table"><thead><tr><th>时间</th><th>事件</th><th>用户</th><th>空间</th><th>来源/邀请码</th></tr></thead><tbody>${rows}</tbody></table>`;
+  },
+
+  renderOpsInviteTab(detail){
+    const rows = (detail.invites || []).map(row=>`
+      <tr>
+        <td>${Utils.esc(App.formatAdminLogTime(row.ts || row.lastUsedAt || row.issuedAt))}</td>
+        <td><code class="invite-code">${Utils.esc(row.code || '—')}</code><small>${Utils.esc(row.status || row.result || '')}</small></td>
+        <td>${Utils.esc(App.opsEventLabel(row.event))}<small>${Utils.esc(row.planName || '')}</small></td>
+        <td>${Utils.esc(row.lastUsedBy || row.user?.userName || '—')}<small>${Utils.esc(row.lastUsedAccount || row.user?.account || '')}</small></td>
+        <td>${Number(row.usedCount||0)} / ${Number(row.maxUses||0)||'不限'}<small>AI ${Number(row.aiCallQuota||0)} · 联网 ${Number(row.searchQuota||0)} · 客户 ${Number(row.customerLimit||0)}</small></td>
+        <td>${Utils.esc(row.sourceChannel || row.user?.sourceChannel || '—')}<small>${Utils.esc(row.campaignName || row.user?.campaignName || '')}${row.expiresAt ? ` · 到期 ${Utils.esc(row.expiresAt)}` : ''}</small></td>
+      </tr>`).join('') || `<tr><td colspan="6" class="empty">暂无邀请码记录</td></tr>`;
+    return `<table class="data-table compact-table"><thead><tr><th>时间</th><th>邀请码</th><th>事件</th><th>用户</th><th>权益/用量</th><th>来源</th></tr></thead><tbody>${rows}</tbody></table>`;
+  },
+
+  renderOpsQuestionTab(detail){
+    const rows = (detail.questions || []).map(q=>`
+      <tr>
+        <td>${Utils.esc(App.formatAdminLogTime(q.ts))}<small>${Utils.esc(q.kind || '')}${q.success===false ? ' · 失败' : ''}</small></td>
+        <td>${Utils.esc(q.user?.userName || '未知')}<small>${Utils.esc(q.user?.account || '')}</small></td>
+        <td>${Utils.esc(App.expertName(q.expertId))}<small>${Utils.esc(q.customerName || '未识别客户')}</small></td>
+        <td>${q.kind==='search' ? '<span class="badge badge-green">联网</span>' : '<span class="badge badge-gray">对话</span>'}</td>
+        <td>${Utils.esc(q.question || '')}<small>${Utils.esc(q.model || q.error || '')}${q.tokens ? ` · ${Number(q.tokens).toLocaleString()} tokens` : ''}</small></td>
+      </tr>`).join('') || `<tr><td colspan="5" class="empty">暂无问题记录</td></tr>`;
+    return `<table class="data-table compact-table admin-question-table"><thead><tr><th>时间</th><th>用户</th><th>专家/客户</th><th>类型</th><th>问题</th></tr></thead><tbody>${rows}</tbody></table>`;
+  },
+
+  renderOpsExpertTab(detail){
+    const expertRows = (detail.experts || []).map(row=>`
+      <tr>
+        <td>${Utils.esc(App.expertName(row.expertId))}<small>${Utils.esc(row.expertId || '')}</small></td>
+        <td>${Number(row.calls||0)}</td>
+        <td>${Number(row.questions||0)}</td>
+        <td>${Number(row.searches||0)}</td>
+        <td>${Number(row.users||0)}</td>
+        <td>${Number(row.tokens||0).toLocaleString()}</td>
+        <td>${Utils.esc(App.formatAdminLogTime(row.lastAt))}</td>
+      </tr>`).join('') || `<tr><td colspan="7" class="empty">暂无专家调用</td></tr>`;
+    const callRows = (detail.aiCalls || []).slice(0,80).map(row=>`
+      <tr>
+        <td>${Utils.esc(App.formatAdminLogTime(row.ts))}</td>
+        <td>${row.kind==='search' ? '<span class="badge badge-green">联网检索</span>' : '<span class="badge badge-gray">模型对话</span>'}<small>${row.success ? '成功' : '失败'}</small></td>
+        <td>${Utils.esc(row.user?.userName || '未知')}<small>${Utils.esc(row.user?.account || '')}</small></td>
+        <td>${Utils.esc(App.expertName(row.expertId))}<small>${Utils.esc(row.customerName || '')}</small></td>
+        <td>${Number(row.tokens||0).toLocaleString()}<small>${row.resultCount ? `来源 ${Number(row.resultCount)} 条` : ''}${row.durationMs ? ` · ${Number(row.durationMs)}ms` : ''}</small></td>
+      </tr>`).join('') || `<tr><td colspan="5" class="empty">暂无调用明细</td></tr>`;
+    return `
+      <h4>专家调用汇总</h4>
+      <table class="data-table compact-table"><thead><tr><th>专家</th><th>调用</th><th>问题</th><th>联网</th><th>用户</th><th>Token</th><th>最近</th></tr></thead><tbody>${expertRows}</tbody></table>
+      <h4 class="admin-log-title">AI/联网明细</h4>
+      <table class="data-table compact-table"><thead><tr><th>时间</th><th>类型</th><th>用户</th><th>专家/客户</th><th>额度</th></tr></thead><tbody>${callRows}</tbody></table>`;
+  },
+
+  renderOpsEntityTab(detail){
+    const block = (title, rows, emptyLabel)=>`
+      <div>
+        <h4>${title}</h4>
+        <table class="data-table compact-table"><thead><tr><th>名称</th><th>提及</th><th>用户</th><th>专家</th><th>最近问题</th></tr></thead><tbody>${
+          (rows || []).slice(0,20).map(row=>`
+            <tr>
+              <td>${Utils.esc(row.name || '')}<small>${Utils.esc(App.formatAdminLogTime(row.lastAt))}</small></td>
+              <td>${Number(row.mentions||0)}</td>
+              <td>${Number(row.users||0)}</td>
+              <td>${(row.experts || []).map(id=>`<code>${Utils.esc(App.expertName(id))}</code>`).join(' ') || '—'}</td>
+              <td>${Utils.esc(row.lastQuestion || '')}</td>
+            </tr>`).join('') || `<tr><td colspan="5" class="empty">${emptyLabel}</td></tr>`
+        }</tbody></table>
+      </div>`;
+    const e = detail.entities || {};
+    return `<div class="admin-log-grid ops-entity-grid">
+      ${block('客户', e.customers, '暂无客户识别')}
+      ${block('公司/组织', e.companies, '暂无公司识别')}
+      ${block('地区', e.regions, '暂无地区识别')}
+      ${block('产品/方案', e.products, '暂无产品识别')}
+    </div>`;
+  },
+
+  setOpsLogTab(tab){
+    App.opsLogTab = tab || 'overview';
+    const target = document.getElementById('opsLogDetail');
+    if(target) target.innerHTML = App.renderOpsLogDetail(App.opsLogDetail);
+  },
+
+  async loadOpsUsageDetail(){
+    const token = document.getElementById('opsLogToken')?.value || document.getElementById('adminLogToken')?.value || localStorage.getItem('aixg_admin_log_token') || '';
+    const days = Number(document.getElementById('opsLogDays')?.value || 7);
+    const query = document.getElementById('opsLogQuery')?.value || '';
+    if(!token.trim()){
+      Toast.show('请输入日志查询口令', 'warning');
+      return;
+    }
+    localStorage.setItem('aixg_admin_log_token', token);
+    try{
+      const resp = await fetch('/api/admin/usage-detail', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-Admin-Log-Token':token},
+        body:JSON.stringify({ days, limit:500, query }),
+        credentials:'include',
+      });
+      const data = await resp.json().catch(()=>null);
+      if(!resp.ok || !data?.success){
+        const msg = data?.error === 'admin_log_token_not_configured'
+          ? '服务端尚未配置 ADMIN_LOG_TOKEN'
+          : data?.error === 'unauthorized'
+            ? '查询口令不正确'
+            : (data?.message || data?.error || `查询失败 HTTP ${resp.status}`);
+        throw new Error(msg);
+      }
+      App.opsLogDetail = data.data;
+      const target = document.getElementById('opsLogDetail');
+      if(target) target.innerHTML = App.renderOpsLogDetail(App.opsLogDetail);
+      Toast.show('运营日志已加载', 'success');
+    }catch(e){
+      Toast.show(e.message || '运营日志查询失败', 'error');
+    }
+  },
+
+  clearOpsUsageDetail(){
+    App.opsLogDetail = null;
+    const target = document.getElementById('opsLogDetail');
+    if(target) target.innerHTML = App.renderOpsLogDetail(null);
+  },
+
+  expertName(expertId){
+    if(!expertId || expertId==='(none)') return '未指定';
+    const ex = typeof Experts!=='undefined' && Experts.get ? Experts.get(expertId) : null;
+    return ex?.name || expertId;
+  },
+
+  opsEventLabel(event){
+    return ({
+      wechat_oauth_login_success:'微信内授权登录',
+      wechat_qr_login_success:'PC扫码登录',
+      wechat_oauth_session_restored:'会话恢复',
+      wechat_demo_login_success:'本机微信模拟登录',
+      login_success:'备用账号登录',
+      wechat_oauth_logout:'微信退出',
+      logout:'退出',
+      invite_code_validated:'邀请码校验',
+      invite_code_issued:'邀请码发放',
+      invite_code_activated:'邀请码开通',
+      invite_ledger_imported:'邀请码导入',
+      invite_ledger_codes_viewed:'查看邀请码台账',
+    })[event] || event || '事件';
   },
 
   generateInviteCodesFromForm(){

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
-import { appendFile, mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
@@ -232,12 +232,28 @@ const server = createServer(async (req, res) => {
       return handleAdminUsageSummary(req, res);
     }
 
+    if (url.pathname === "/api/admin/usage-detail" && req.method === "POST") {
+      return handleAdminUsageDetail(req, res);
+    }
+
     if (url.pathname === "/api/invite-ledger/codes" && req.method === "GET") {
       return handleInviteLedgerCodes(req, res);
     }
 
     if (url.pathname === "/api/invite-ledger/validate" && req.method === "GET") {
       return handleInviteLedgerValidate(req, res, url);
+    }
+
+    if (url.pathname === "/api/invite-ledger/import" && req.method === "POST") {
+      return handleInviteLedgerImport(req, res);
+    }
+
+    if (url.pathname === "/api/invite-ledger/issue" && req.method === "POST") {
+      return handleInviteLedgerIssue(req, res);
+    }
+
+    if (url.pathname === "/api/invite-ledger/activate" && req.method === "POST") {
+      return handleInviteLedgerActivate(req, res);
     }
 
     if (req.method !== "GET" && req.method !== "HEAD") {
@@ -869,6 +885,44 @@ async function handleAdminUsageSummary(req, res) {
   return sendJson(res, 200, { success: true, data: summary });
 }
 
+async function handleAdminUsageDetail(req, res) {
+  if (!isAllowedOrigin(req)) {
+    await writeLog("security", req, { event: "origin_forbidden", path: req.url || "" });
+    return sendJson(res, 403, { success: false, error: "origin_forbidden" });
+  }
+  if (!config.adminLogToken) {
+    return sendJson(res, 503, { success: false, error: "admin_log_token_not_configured" });
+  }
+  const token = String(req.headers["x-admin-log-token"] || "");
+  if (!safeEqualText(token, config.adminLogToken)) {
+    await writeLog("security", req, { event: "admin_usage_detail_denied", path: req.url || "" });
+    return sendJson(res, 401, { success: false, error: "unauthorized" });
+  }
+  if (!checkRateLimit(`admin-detail:${clientKey(req)}`)) {
+    await writeLog("security", req, { event: "rate_limited", path: req.url || "" });
+    return sendJson(res, 429, { success: false, error: "rate_limited" });
+  }
+
+  const raw = await readBody(req, 16 * 1024);
+  let body = {};
+  try {
+    body = JSON.parse(raw || "{}");
+  } catch {
+    return sendJson(res, 400, { success: false, error: "invalid_json" });
+  }
+  const days = clampNumber(body.days, 1, 30, 7);
+  const limit = clampNumber(body.limit, 20, 1000, 300);
+  const query = redactText(body.query || "").slice(0, 120);
+  const detail = await buildUsageDetail({ days, limit, query });
+  await writeLog("audit", req, {
+    event: "admin_usage_detail_viewed",
+    action: "admin_usage_detail",
+    result: "success",
+    usage: { result_count: detail.questions.length },
+  });
+  return sendJson(res, 200, { success: true, data: detail });
+}
+
 async function handleInviteLedgerValidate(req, res, url) {
   if (!isAllowedOrigin(req)) {
     await writeLog("security", req, { event: "origin_forbidden", path: req.url || "" });
@@ -891,6 +945,113 @@ async function handleInviteLedgerValidate(req, res, url) {
   if (Number(item.maxUses || 0) > 0 && Number(item.usedCount || 0) >= Number(item.maxUses || 0)) {
     return sendJson(res, 400, { success: false, error: "invite_used_up", message: "邀请码使用次数已用完" });
   }
+  return sendJson(res, 200, { success: true, data: { code: publicInviteCode(item) } });
+}
+
+async function handleInviteLedgerImport(req, res) {
+  if (!isAllowedOrigin(req)) {
+    await writeLog("security", req, { event: "origin_forbidden", path: req.url || "" });
+    return sendJson(res, 403, { success: false, error: "origin_forbidden" });
+  }
+  if (!isAdminTokenAuthorized(req)) {
+    await writeLog("security", req, { event: "invite_ledger_import_denied", path: req.url || "" });
+    return sendJson(res, 401, { success: false, error: "unauthorized" });
+  }
+  let body;
+  try {
+    body = await readJsonBody(req, 128 * 1024);
+  } catch {
+    return sendJson(res, 400, { success: false, error: "invalid_json" });
+  }
+  const incoming = Array.isArray(body.codes) ? body.codes : [];
+  const ledger = await readInviteLedger();
+  const map = new Map((ledger.codes || []).map((item) => [String(item.code || "").toUpperCase(), item]));
+  incoming.forEach((item) => {
+    const safe = sanitizeInviteLedgerItem(item);
+    if (!safe.code) return;
+    map.set(safe.code, { ...(map.get(safe.code) || {}), ...safe });
+  });
+  ledger.codes = [...map.values()].sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+  ledger.updatedAt = new Date().toISOString();
+  await writeInviteLedger(ledger);
+  await writeLog("audit", req, { event: "invite_ledger_imported", action: "invite_ledger_import", result: "success", count: incoming.length });
+  return sendJson(res, 200, { success: true, data: { count: incoming.length, total: ledger.codes.length } });
+}
+
+async function handleInviteLedgerIssue(req, res) {
+  if (!isAllowedOrigin(req)) {
+    await writeLog("security", req, { event: "origin_forbidden", path: req.url || "" });
+    return sendJson(res, 403, { success: false, error: "origin_forbidden" });
+  }
+  if (!isAdminTokenAuthorized(req)) {
+    await writeLog("security", req, { event: "invite_ledger_issue_denied", path: req.url || "" });
+    return sendJson(res, 401, { success: false, error: "unauthorized" });
+  }
+  let body;
+  try {
+    body = await readJsonBody(req, 32 * 1024);
+  } catch {
+    return sendJson(res, 400, { success: false, error: "invalid_json" });
+  }
+  const code = sanitizeShortParam(body.code).toUpperCase();
+  if (!code) return sendJson(res, 400, { success: false, error: "code_required" });
+  const ledger = await readInviteLedger();
+  const item = (ledger.codes || []).find((x) => String(x.code || "").toUpperCase() === code);
+  if (!item) return sendJson(res, 404, { success: false, error: "invite_not_found" });
+  item.issuedAt = item.issuedAt || new Date().toISOString();
+  item.expiresAt = item.expiresAt || dateOnlyAfterDays(item.issuedAt, 15);
+  item.issuedBy = sanitizeShortParam(body.issuedBy || "");
+  item.issuedTo = sanitizeShortParam(body.issuedTo || "");
+  item.inviteLink = redactText(body.inviteLink || "").slice(0, 500);
+  if (item.status === "active") item.status = "issued";
+  ledger.updatedAt = new Date().toISOString();
+  await writeInviteLedger(ledger);
+  await writeLog("audit", req, { event: "invite_code_issued", action: "invite_code_issue", code, result: "success" });
+  return sendJson(res, 200, { success: true, data: { code: publicInviteCode(item) } });
+}
+
+async function handleInviteLedgerActivate(req, res) {
+  if (!isAllowedOrigin(req)) {
+    await writeLog("security", req, { event: "origin_forbidden", path: req.url || "" });
+    return sendJson(res, 403, { success: false, error: "origin_forbidden" });
+  }
+  let body;
+  try {
+    body = await readJsonBody(req, 32 * 1024);
+  } catch {
+    return sendJson(res, 400, { success: false, error: "invalid_json" });
+  }
+  const code = sanitizeShortParam(body.code).toUpperCase();
+  if (!code) return sendJson(res, 400, { success: false, error: "code_required" });
+  const ledger = await readInviteLedger();
+  const item = (ledger.codes || []).find((x) => String(x.code || "").toUpperCase() === code);
+  if (!item) return sendJson(res, 404, { success: false, error: "invite_not_found" });
+  item.usedCount = Math.max(Number(item.usedCount || 0), Number(body.usedCount || 0), 1);
+  item.lastUsedAt = String(body.activatedAt || new Date().toISOString());
+  item.lastUsedBy = redactText(body.userName || "").slice(0, 80);
+  item.lastUsedAccount = redactText(body.account || "").slice(0, 80);
+  item.lastEnterpriseId = sanitizeShortParam(body.enterpriseId || "");
+  item.lastUserId = sanitizeShortParam(body.userId || "");
+  if (Number(item.maxUses || 0) > 0 && Number(item.usedCount || 0) >= Number(item.maxUses || 0)) item.status = "activated";
+  ledger.activations = Array.isArray(ledger.activations) ? ledger.activations : [];
+  ledger.activations.push({
+    code,
+    userName: item.lastUsedBy,
+    account: item.lastUsedAccount,
+    enterpriseId: item.lastEnterpriseId,
+    userId: item.lastUserId,
+    activatedAt: item.lastUsedAt,
+  });
+  ledger.activations = ledger.activations.slice(-1000);
+  ledger.updatedAt = new Date().toISOString();
+  await writeInviteLedger(ledger);
+  await writeLog("audit", req, {
+    event: "invite_code_activated",
+    action: "invite_code_activate",
+    code,
+    result: "success",
+    user: { userName: item.lastUsedBy, account: item.lastUsedAccount, enterpriseId: item.lastEnterpriseId, inviteCode: code },
+  });
   return sendJson(res, 200, { success: true, data: { code: publicInviteCode(item) } });
 }
 
@@ -922,13 +1083,64 @@ async function findInviteLedgerCode(code) {
 }
 
 async function readInviteLedgerCodes() {
+  const ledger = await readInviteLedger();
+  return Array.isArray(ledger.codes) ? ledger.codes : [];
+}
+
+async function readInviteLedger() {
   try {
     const text = await readFile(INVITE_LEDGER_FILE, "utf8");
     const ledger = JSON.parse(text || "{}");
-    return Array.isArray(ledger.codes) ? ledger.codes : [];
+    return ledger && typeof ledger === "object" ? ledger : { codes: [] };
   } catch {
-    return [];
+    return { codes: [] };
   }
+}
+
+async function writeInviteLedger(ledger) {
+  const safe = ledger && typeof ledger === "object" ? ledger : { codes: [] };
+  safe.codes = Array.isArray(safe.codes) ? safe.codes : [];
+  await mkdir(path.dirname(INVITE_LEDGER_FILE), { recursive: true });
+  await writeFile(INVITE_LEDGER_FILE, JSON.stringify(safe, null, 2) + "\n", "utf8");
+}
+
+async function readJsonBody(req, maxBytes) {
+  const raw = await readBody(req, maxBytes);
+  try {
+    return JSON.parse(raw || "{}");
+  } catch {
+    const err = new Error("invalid_json");
+    err.statusCode = 400;
+    throw err;
+  }
+}
+
+function isAdminTokenAuthorized(req) {
+  if (!config.adminLogToken) return false;
+  return safeEqualText(String(req.headers["x-admin-log-token"] || ""), config.adminLogToken);
+}
+
+function sanitizeInviteLedgerItem(item = {}) {
+  const src = item && typeof item === "object" ? item : {};
+  return {
+    code: sanitizeShortParam(src.code).toUpperCase(),
+    type: sanitizeShortParam(src.type || "gift"),
+    plan: sanitizeShortParam(src.plan || "personal_trial"),
+    planName: redactText(src.planName || "个人体验版").slice(0, 80),
+    sourceChannel: redactText(src.sourceChannel || "").slice(0, 80),
+    campaignName: redactText(src.campaignName || "").slice(0, 120),
+    maxUses: clampNumber(src.maxUses, 0, 999999, 1),
+    usedCount: clampNumber(src.usedCount, 0, 999999, 0),
+    aiCallQuota: clampNumber(src.aiCallQuota, 0, 9999999, 0),
+    searchQuota: clampNumber(src.searchQuota, 0, 9999999, 0),
+    customerLimit: clampNumber(src.customerLimit, 0, 9999999, 0),
+    expiresAt: sanitizeShortParam(src.expiresAt || ""),
+    status: ["active", "issued", "activated", "disabled"].includes(src.status) ? src.status : "active",
+    remark: redactText(src.remark || "").slice(0, 300),
+    createdAt: String(src.createdAt || new Date().toISOString()).slice(0, 40),
+    createdBy: redactText(src.createdBy || "system").slice(0, 80),
+    issuedAt: String(src.issuedAt || "").slice(0, 40),
+  };
 }
 
 function publicInviteCode(item = {}) {
@@ -951,6 +1163,13 @@ function publicInviteCode(item = {}) {
     createdBy: item.createdBy || "invite-ledger",
     issuedAt: item.issuedAt || "",
   };
+}
+
+function dateOnlyAfterDays(base, days) {
+  const d = new Date(base || new Date().toISOString());
+  const valid = Number.isNaN(d.getTime()) ? new Date() : d;
+  valid.setDate(valid.getDate() + Number(days || 0));
+  return valid.toISOString().slice(0, 10);
 }
 
 async function handlePlatformSearch(req, res) {
@@ -1838,6 +2057,143 @@ async function buildUsageSummary({ days = 7, limit = 200 } = {}) {
   };
 }
 
+async function buildUsageDetail({ days = 7, limit = 300, query = "" } = {}) {
+  let entries = [];
+  let storage = {
+    type: "postgres",
+    note: "日志已写入 Render Postgres；Free Postgres 有 30 天过期限制，生产使用前应升级或迁移。",
+  };
+  try {
+    entries = await readRecentPostgresLogs(days);
+  } catch (err) {
+    warnPostgresOnce(`[postgres-log] detail fallback: ${err.message}`);
+    entries = await readRecentLogs(days);
+    storage = {
+      type: "ephemeral-jsonl",
+      note: "当前未能读取数据库，已回退读取本地容器日志；Render Free 环境下容器文件可能随重启或重新部署丢失。",
+    };
+  }
+
+  const q = String(query || "").trim().toLowerCase();
+  const sourceEntries = q ? entries.filter((entry) => usageEntryMatchesQuery(entry, q)) : entries;
+  const sorted = sourceEntries.sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")));
+  const loginEntries = sorted.filter((entry) => LOGIN_EVENTS.has(entry.event));
+  const visitEntries = sorted.filter((entry) => entry.event === "page_view");
+  const inviteEntries = sorted.filter((entry) => String(entry.event || "").startsWith("invite_"));
+  const aiEntries = sorted.filter((entry) => entry.kind === "ai-usage");
+  const questionEntries = sorted.filter((entry) => (entry.kind === "ai-usage" && entry.question) || entry.event === "ai_question_submitted");
+  const searchEntries = aiEntries.filter((entry) => entry.event === "platform_search" || entry.path === "/api/platform/search");
+  const chatEntries = aiEntries.filter((entry) => entry.event === "platform_chat" || entry.path === "/api/platform/chat");
+
+  const users = new Map();
+  const experts = new Map();
+  const customers = new Map();
+  const companies = new Map();
+  const regions = new Map();
+  const products = new Map();
+
+  for (const entry of sorted) {
+    const user = normalizeUser(entry.user);
+    const userKey = makeUserKey(user);
+    if (user.account || user.userName) {
+      const row = ensureMapRow(users, userKey, () => ({
+        key: userKey,
+        user,
+        logins: 0,
+        visits: 0,
+        questions: 0,
+        aiCalls: 0,
+        searches: 0,
+        tokens: 0,
+        inviteCode: user.inviteCode || "",
+        sourceChannel: user.sourceChannel || "",
+        campaignName: user.campaignName || "",
+        firstAt: entry.ts || "",
+        lastAt: entry.ts || "",
+      }));
+      if (LOGIN_EVENTS.has(entry.event)) row.logins += 1;
+      if (entry.event === "page_view") row.visits += 1;
+      if ((entry.kind === "ai-usage" && entry.question) || entry.event === "ai_question_submitted") row.questions += 1;
+      if (entry.event === "platform_chat") row.aiCalls += 1;
+      if (entry.event === "platform_search") row.searches += 1;
+      row.tokens += Number(entry.usage?.total_tokens || 0) || 0;
+      row.inviteCode = row.inviteCode || user.inviteCode || "";
+      row.sourceChannel = row.sourceChannel || user.sourceChannel || "";
+      row.campaignName = row.campaignName || user.campaignName || "";
+      row.firstAt = minTextDate(row.firstAt, entry.ts);
+      row.lastAt = maxTextDate(row.lastAt, entry.ts);
+    }
+
+    const question = redactText(entry.question || entry.message || "");
+    const customerName = primaryCustomerName(entry);
+    if (customerName) addEntity(customers, customerName, entry, userKey, question);
+    detectCompanyNames(question).forEach((name) => addEntity(companies, name, entry, userKey, question));
+    detectRegions(question).forEach((name) => addEntity(regions, name, entry, userKey, question));
+    detectProducts(question).forEach((name) => addEntity(products, name, entry, userKey, question));
+
+    const expertId = entry.expertId || (Array.isArray(entry.context?.expertIds) ? entry.context.expertIds[0] : "");
+    if (expertId) {
+      const row = ensureMapRow(experts, expertId, () => ({
+        expertId,
+        calls: 0,
+        questions: 0,
+        searches: 0,
+        tokens: 0,
+        users: new Set(),
+        firstAt: entry.ts || "",
+        lastAt: entry.ts || "",
+      }));
+      if (entry.kind === "ai-usage") row.calls += 1;
+      if (question) row.questions += 1;
+      if (entry.event === "platform_search") row.searches += 1;
+      row.tokens += Number(entry.usage?.total_tokens || 0) || 0;
+      if (userKey) row.users.add(userKey);
+      row.firstAt = minTextDate(row.firstAt, entry.ts);
+      row.lastAt = maxTextDate(row.lastAt, entry.ts);
+    }
+  }
+
+  const ledger = await readInviteLedger().catch(() => ({ codes: [], activations: [] }));
+  const workspaceUsers = await readCloudWorkspaceUsers().catch(() => []);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    days,
+    query,
+    storage,
+    counts: {
+      logs: sorted.length,
+      logins: loginEntries.length,
+      visits: visitEntries.length,
+      inviteEvents: inviteEntries.length,
+      questions: questionEntries.length,
+      aiCalls: chatEntries.length,
+      searches: searchEntries.length,
+      users: users.size,
+      customers: customers.size,
+      companies: companies.size,
+      regions: regions.size,
+      products: products.size,
+    },
+    users: [...users.values()].sort((a, b) => String(b.lastAt).localeCompare(String(a.lastAt))).slice(0, 120),
+    logins: loginEntries.slice(0, limit).map(normalizeEventRow),
+    visits: visitEntries.slice(0, limit).map(normalizeEventRow),
+    invites: buildInviteDetailRows(inviteEntries, ledger, limit),
+    questions: questionEntries.slice(0, limit).map(normalizeQuestionEntry),
+    aiCalls: aiEntries.slice(0, limit).map(normalizeUsageCallRow),
+    experts: [...experts.values()]
+      .map((row) => ({ ...row, users: row.users.size }))
+      .sort((a, b) => b.calls - a.calls),
+    entities: {
+      customers: finalizeEntityRows(customers),
+      companies: finalizeEntityRows(companies),
+      regions: finalizeEntityRows(regions),
+      products: finalizeEntityRows(products),
+    },
+    workspaceUsers,
+  };
+}
+
 async function ensureDatabaseReady() {
   if (!config.databaseUrl) return null;
   if (pgInitPromise) return pgInitPromise;
@@ -1902,6 +2258,28 @@ async function readRecentPostgresLogs(days) {
     [days, queryLimit],
   );
   return result.rows.map((row) => row.payload).filter(Boolean);
+}
+
+async function readCloudWorkspaceUsers(limit = 120) {
+  const pool = await ensureDatabaseReady();
+  if (!pool) return [];
+  const result = await pool.query(
+    `SELECT external_id, user_profile, workspace_version, updated_at, created_at
+       FROM user_workspaces
+      ORDER BY updated_at DESC
+      LIMIT $1`,
+    [limit],
+  );
+  return result.rows.map((row) => ({
+    externalId: String(row.external_id || "").slice(0, 80),
+    nickname: redactText(row.user_profile?.nickname || row.user_profile?.userName || "微信用户").slice(0, 80),
+    sourceChannel: redactText(row.user_profile?.sourceChannel || "").slice(0, 80),
+    campaignName: redactText(row.user_profile?.campaignName || "").slice(0, 120),
+    inviteCode: sanitizeShortParam(row.user_profile?.inviteCode || ""),
+    workspaceVersion: Number(row.workspace_version || 0),
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || "",
+  }));
 }
 
 function logEntryToDbRow(entry) {
@@ -1999,6 +2377,199 @@ function normalizeQuestionEntry(entry) {
     durationMs: Number(entry.durationMs || 0) || 0,
     error: entry.error || "",
   };
+}
+
+const LOGIN_EVENTS = new Set([
+  "wechat_oauth_login_success",
+  "wechat_qr_login_success",
+  "wechat_oauth_session_restored",
+  "wechat_demo_login_success",
+  "login_success",
+  "wechat_oauth_logout",
+  "logout",
+]);
+
+function normalizeEventRow(entry) {
+  return {
+    ts: entry.ts || "",
+    event: entry.event || "",
+    action: entry.action || "",
+    route: entry.route || "",
+    path: entry.path || "",
+    result: entry.result || "",
+    user: normalizeUser(entry.user),
+    inviteCode: entry.code || entry.user?.inviteCode || "",
+    sourceChannel: entry.sourceChannel || entry.user?.sourceChannel || "",
+    campaignName: entry.campaignName || entry.user?.campaignName || "",
+    message: redactText(entry.message || entry.reason || entry.error || ""),
+  };
+}
+
+function normalizeUsageCallRow(entry) {
+  return {
+    ts: entry.ts || "",
+    kind: entry.event === "platform_search" || entry.path === "/api/platform/search" ? "search" : "chat",
+    success: entry.success !== false,
+    user: normalizeUser(entry.user),
+    expertId: entry.expertId || "",
+    customerName: primaryCustomerName(entry),
+    question: redactText(entry.question || ""),
+    model: entry.model || "",
+    tokens: Number(entry.usage?.total_tokens || 0) || 0,
+    searchCount: Number(entry.usage?.search_count || entry.usage?.web_search || 0) || 0,
+    resultCount: Number(entry.usage?.result_count || 0) || 0,
+    durationMs: Number(entry.durationMs || 0) || 0,
+    error: entry.error || "",
+  };
+}
+
+function buildInviteDetailRows(inviteEntries, ledger, limit) {
+  const eventRows = inviteEntries.slice(0, limit).map((entry) => ({
+    type: "event",
+    ts: entry.ts || "",
+    event: entry.event || "",
+    code: entry.code || entry.user?.inviteCode || "",
+    result: entry.result || "",
+    user: normalizeUser(entry.user),
+    sourceChannel: entry.sourceChannel || entry.user?.sourceChannel || "",
+    campaignName: entry.campaignName || entry.user?.campaignName || "",
+    message: redactText(entry.message || entry.error || ""),
+  }));
+  const codeRows = (Array.isArray(ledger.codes) ? ledger.codes : []).map((item) => ({
+    type: "ledger",
+    ts: item.lastUsedAt || item.issuedAt || item.createdAt || "",
+    event: item.lastUsedAt ? "invite_code_activated" : (item.issuedAt ? "invite_code_issued" : "invite_code_created"),
+    code: String(item.code || "").toUpperCase(),
+    status: item.status || "",
+    planName: item.planName || "",
+    sourceChannel: item.sourceChannel || "",
+    campaignName: item.campaignName || "",
+    usedCount: Number(item.usedCount || 0),
+    maxUses: Number(item.maxUses || 0),
+    aiCallQuota: Number(item.aiCallQuota || 0),
+    searchQuota: Number(item.searchQuota || 0),
+    customerLimit: Number(item.customerLimit || 0),
+    expiresAt: item.expiresAt || "",
+    issuedAt: item.issuedAt || "",
+    lastUsedAt: item.lastUsedAt || "",
+    lastUsedBy: item.lastUsedBy || "",
+    lastUsedAccount: item.lastUsedAccount || "",
+  }));
+  return [...eventRows, ...codeRows]
+    .sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")))
+    .slice(0, limit);
+}
+
+function addEntity(map, name, entry, userKey, question) {
+  const clean = redactText(name || "").trim().slice(0, 120);
+  if (!clean) return;
+  const row = ensureMapRow(map, clean, () => ({
+    name: clean,
+    mentions: 0,
+    users: new Set(),
+    experts: new Set(),
+    firstAt: entry.ts || "",
+    lastAt: entry.ts || "",
+    lastQuestion: "",
+  }));
+  row.mentions += 1;
+  if (userKey) row.users.add(userKey);
+  if (entry.expertId) row.experts.add(entry.expertId);
+  row.firstAt = minTextDate(row.firstAt, entry.ts);
+  if (!row.lastAt || String(entry.ts || "") > row.lastAt) {
+    row.lastAt = entry.ts || "";
+    row.lastQuestion = question || entry.question || "";
+  }
+}
+
+function finalizeEntityRows(map) {
+  return [...map.values()].map((row) => ({
+    name: row.name,
+    mentions: row.mentions,
+    users: row.users.size,
+    experts: [...row.experts],
+    firstAt: row.firstAt,
+    lastAt: row.lastAt,
+    lastQuestion: redactText(row.lastQuestion || ""),
+  })).sort((a, b) => b.mentions - a.mentions).slice(0, 80);
+}
+
+function usageEntryMatchesQuery(entry, query) {
+  const user = normalizeUser(entry.user);
+  const text = [
+    entry.event, entry.action, entry.route, entry.path, entry.code,
+    user.userName, user.account, user.enterpriseName, user.workspaceType, user.inviteCode,
+    user.sourceChannel, user.campaignName,
+    entry.expertId, entry.detectedCustomerName, entry.question, entry.message, entry.error,
+    ...(Array.isArray(entry.context?.customerNames) ? entry.context.customerNames : []),
+    ...(Array.isArray(entry.context?.opportunityNames) ? entry.context.opportunityNames : []),
+  ].filter(Boolean).join(" ").toLowerCase();
+  return text.includes(query);
+}
+
+function detectCompanyNames(text) {
+  const value = String(text || "");
+  const pattern = /([\u4e00-\u9fa5A-Za-z0-9（）()·]{3,40}(?:公司|集团|医院|学校|大学|果业|科技|委员会|中心|银行|政府|平台|连锁|药业))/g;
+  const names = new Set();
+  let match;
+  while ((match = pattern.exec(value))) {
+    const name = normalizeCustomerNameCandidate(match[1]);
+    if (isPlausibleCustomerName(name)) names.add(name);
+  }
+  return [...names].slice(0, 12);
+}
+
+const REGION_WORDS = [
+  "北京", "上海", "天津", "重庆", "河北", "山西", "辽宁", "吉林", "黑龙江", "江苏", "浙江", "安徽", "福建", "江西", "山东",
+  "河南", "湖北", "湖南", "广东", "海南", "四川", "贵州", "云南", "陕西", "甘肃", "青海", "台湾", "内蒙古", "广西", "西藏",
+  "宁夏", "新疆", "香港", "澳门", "郑州", "昆明", "龙岩", "成都", "意大利", "欧洲",
+];
+
+function detectRegions(text) {
+  const value = String(text || "");
+  const names = new Set();
+  const suffixPattern = /([\u4e00-\u9fa5]{2,12}(?:省|市|区|县|自治区|特别行政区))/g;
+  let match;
+  while ((match = suffixPattern.exec(value))) names.add(match[1]);
+  REGION_WORDS.forEach((word) => {
+    if (value.includes(word)) names.add(word);
+  });
+  return [...names].slice(0, 20);
+}
+
+const PRODUCT_WORDS = [
+  "WorkBuddy", "中药饮片", "汽车配件", "协同办公系统", "AI客服", "智能体", "草草药",
+];
+
+function detectProducts(text) {
+  const value = String(text || "");
+  const names = new Map();
+  const add = (rawName) => {
+    const name = redactText(rawName || "").replace(/[，。；、\s]+$/g, "").slice(0, 40);
+    if (!isPlausibleProductName(name)) return;
+    const key = name.toLowerCase();
+    if (!names.has(key)) names.set(key, name);
+  };
+  PRODUCT_WORDS.forEach((word) => {
+    if (value.toLowerCase().includes(word.toLowerCase())) add(word);
+  });
+  const patterns = [
+    /(?:产品|方案|服务|品种|品规|型号|采购|售卖|销售)(?:是|为|叫|：|:|有)?\s*([\u4e00-\u9fa5A-Za-z0-9+·-]{2,24})/g,
+    /([\u4e00-\u9fa5A-Za-z0-9+·-]{2,24})(?:产品|方案|服务|品种|品规|型号)/g,
+  ];
+  patterns.forEach((pattern) => {
+    let match;
+    while ((match = pattern.exec(value))) {
+      add(match[1] || "");
+    }
+  });
+  return [...names.values()].slice(0, 20);
+}
+
+function isPlausibleProductName(name) {
+  if (!name || name.length < 2 || name.length > 40) return false;
+  if (/^(?:客户|公司|他们|我们|你们|目前|这个|那个|哪些|什么|如何|可以|不愿意|低价|价格)$/.test(name)) return false;
+  return /[\u4e00-\u9fa5A-Za-z0-9]/.test(name);
 }
 
 function normalizeUser(user = {}) {

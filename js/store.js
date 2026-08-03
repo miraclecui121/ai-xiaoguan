@@ -831,7 +831,7 @@ const Store = {
     try{
       fetch('/api/invite-ledger/import', {
         method:'POST',
-        headers:{'Content-Type':'application/json'},
+        headers:{'Content-Type':'application/json','X-Admin-Log-Token':localStorage.getItem('aixg_admin_log_token')||''},
         body: JSON.stringify({ codes }),
         keepalive:true,
       }).catch(()=>{});
@@ -852,7 +852,7 @@ const Store = {
     try{
       fetch('/api/invite-ledger/issue', {
         method:'POST',
-        headers:{'Content-Type':'application/json'},
+        headers:{'Content-Type':'application/json','X-Admin-Log-Token':localStorage.getItem('aixg_admin_log_token')||''},
         body: JSON.stringify({
           code: normalized,
           inviteLink,
