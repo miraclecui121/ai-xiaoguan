@@ -17,13 +17,26 @@
     wechat_oauth_session_restored:"会话恢复",
     wechat_demo_login_success:"本机微信模拟登录",
     login_success:"备用账号登录",
+    invite_code_created:"邀请码创建",
+    invite_code_validated:"邀请码校验",
     invite_code_issued:"邀请码发放",
     invite_code_activated:"邀请码激活",
     invite_ledger_imported:"邀请码导入",
+    invite_ledger_codes_viewed:"查看邀请码台账",
     ai_chat:"AI对话",
     platform_chat:"AI对话",
     platform_search:"联网检索",
     admin_usage_detail_viewed:"运营日志查询",
+  };
+  const STATUS_LABELS = {
+    active:"未发放",
+    issued:"已发放",
+    activated:"已激活",
+    disabled:"已停用",
+    success:"成功",
+    found:"已找到",
+    not_found:"不存在",
+    error:"失败",
   };
 
   const state = {
@@ -52,6 +65,18 @@
   }
   function eventLabel(event){
     return EVENT_LABELS[event] || event || "事件";
+  }
+  function statusLabel(status){
+    return STATUS_LABELS[status] || status || "—";
+  }
+  function inviteLink(row){
+    const code = String(row?.code || "").trim();
+    if(!code) return "";
+    const params = new URLSearchParams();
+    params.set("invite", code);
+    if(row.sourceChannel || row.user?.sourceChannel) params.set("src", row.sourceChannel || row.user.sourceChannel);
+    if(row.campaignName || row.user?.campaignName) params.set("campaign", row.campaignName || row.user.campaignName);
+    return `${location.origin}/?${params.toString()}`;
   }
   function setStatus(text, cls){
     const box = $("opsStatus");
@@ -91,6 +116,12 @@
       btn.addEventListener("click", ()=>{
         state.tab = btn.dataset.tab || "overview";
         render();
+      });
+    });
+    root.querySelectorAll("[data-copy-invite]").forEach((btn)=>{
+      btn.addEventListener("click", ()=>{
+        const index = Number(btn.dataset.copyInvite || -1);
+        copyInviteLink(index);
       });
     });
   }
@@ -156,16 +187,26 @@
     return `<div class="ops-panel">${table(["时间","事件","用户","空间","来源/邀请码"], rows, "暂无登录记录")}</div>`;
   }
   function renderInvites(detail){
-    const rows = (detail.invites || []).map(row=>`
+    const rows = (detail.invites || []).map((row, index)=>{
+      const link = inviteLink(row);
+      const canCopy = Boolean(row.code && link);
+      const sourceMeta = [
+        row.campaignName || row.user?.campaignName || "",
+        row.expiresAt ? `到期 ${row.expiresAt}` : "",
+        row.issuedBy ? `发放人 ${row.issuedBy}` : "",
+      ].filter(Boolean).join(" · ");
+      return `
       <tr>
         <td>${esc(fmtTime(row.ts || row.lastUsedAt || row.issuedAt))}</td>
-        <td><code class="ops-code">${esc(row.code || "—")}</code><small>${esc(row.status || row.result || "")}</small></td>
+        <td><code class="ops-code">${esc(row.code || "—")}</code><small>${esc(statusLabel(row.status || row.result))}</small></td>
         <td>${esc(eventLabel(row.event))}<small>${esc(row.planName || "")}</small></td>
         <td>${esc(row.lastUsedBy || row.user?.userName || "—")}<small>${esc(row.lastUsedAccount || row.user?.account || "")}</small></td>
         <td>${Number(row.usedCount || 0)} / ${Number(row.maxUses || 0) || "不限"}<small>AI ${Number(row.aiCallQuota || 0)} · 联网 ${Number(row.searchQuota || 0)} · 客户 ${Number(row.customerLimit || 0)}</small></td>
-        <td>${esc(row.sourceChannel || row.user?.sourceChannel || "—")}<small>${esc(row.campaignName || row.user?.campaignName || "")}${row.expiresAt ? ` · 到期 ${esc(row.expiresAt)}` : ""}</small></td>
-      </tr>`).join("");
-    return `<div class="ops-panel">${table(["时间","邀请码","事件","用户","权益/用量","来源"], rows, "暂无邀请码记录")}</div>`;
+        <td>${esc(row.sourceChannel || row.user?.sourceChannel || "—")}<small>${esc(sourceMeta)}</small></td>
+        <td>${canCopy ? `<button class="btn btn-ghost btn-sm ops-copy-btn" type="button" data-copy-invite="${index}">复制链接</button>` : "—"}</td>
+      </tr>`;
+    }).join("");
+    return `<div class="ops-panel">${table(["时间","邀请码","事件","用户","权益/用量","来源","操作"], rows, "暂无邀请码记录")}</div>`;
   }
   function renderQuestions(detail){
     const rows = (detail.questions || []).map(q=>`
@@ -266,6 +307,51 @@
       setStatus(err.message || "查询失败", "error");
     }finally{
       document.body.classList.remove("ops-loading");
+    }
+  }
+  async function copyInviteLink(index){
+    const row = state.detail?.invites?.[index];
+    const token = $("opsToken")?.value || localStorage.getItem("aixg_admin_log_token") || "";
+    const link = inviteLink(row);
+    if(!row?.code || !link){
+      setStatus("邀请码无效", "error");
+      return;
+    }
+    if(!token.trim()){
+      setStatus("请输入查询口令后再复制", "error");
+      return;
+    }
+    setStatus("正在标记发放", "");
+    try{
+      const resp = await fetch("/api/invite-ledger/issue", {
+        method:"POST",
+        credentials:"include",
+        headers:{
+          "Content-Type":"application/json",
+          "X-Admin-Log-Token":token,
+        },
+        body:JSON.stringify({
+          code: row.code,
+          inviteLink: link,
+          issuedBy: "运营后台",
+        }),
+      });
+      const data = await resp.json().catch(()=>null);
+      if(!resp.ok || !data?.success){
+        const msg = data?.error === "unauthorized"
+          ? "查询口令不正确，无法记录发放"
+          : (data?.message || data?.error || `发放记录失败 HTTP ${resp.status}`);
+        throw new Error(msg);
+      }
+      await navigator.clipboard.writeText(link);
+      row.status = "issued";
+      row.event = "invite_code_issued";
+      row.issuedAt = row.issuedAt || new Date().toISOString();
+      row.ts = row.issuedAt;
+      render();
+      setStatus("链接已复制，已标记为已发放", "ok");
+    }catch(err){
+      setStatus(err.message || "复制失败", "error");
     }
   }
   function clear(){

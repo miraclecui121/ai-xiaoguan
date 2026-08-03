@@ -715,15 +715,22 @@ const App = {
   },
 
   renderOpsInviteTab(detail){
-    const rows = (detail.invites || []).map(row=>`
+    const rows = (detail.invites || []).map(row=>{
+      const sourceMeta = [
+        row.campaignName || row.user?.campaignName || '',
+        row.expiresAt ? `到期 ${row.expiresAt}` : '',
+        row.issuedBy ? `发放人 ${row.issuedBy}` : '',
+      ].filter(Boolean).join(' · ');
+      return `
       <tr>
         <td>${Utils.esc(App.formatAdminLogTime(row.ts || row.lastUsedAt || row.issuedAt))}</td>
-        <td><code class="invite-code">${Utils.esc(row.code || '—')}</code><small>${Utils.esc(row.status || row.result || '')}</small></td>
+        <td><code class="invite-code">${Utils.esc(row.code || '—')}</code><small>${Utils.esc(App.opsStatusLabel(row.status || row.result))}</small></td>
         <td>${Utils.esc(App.opsEventLabel(row.event))}<small>${Utils.esc(row.planName || '')}</small></td>
         <td>${Utils.esc(row.lastUsedBy || row.user?.userName || '—')}<small>${Utils.esc(row.lastUsedAccount || row.user?.account || '')}</small></td>
         <td>${Number(row.usedCount||0)} / ${Number(row.maxUses||0)||'不限'}<small>AI ${Number(row.aiCallQuota||0)} · 联网 ${Number(row.searchQuota||0)} · 客户 ${Number(row.customerLimit||0)}</small></td>
-        <td>${Utils.esc(row.sourceChannel || row.user?.sourceChannel || '—')}<small>${Utils.esc(row.campaignName || row.user?.campaignName || '')}${row.expiresAt ? ` · 到期 ${Utils.esc(row.expiresAt)}` : ''}</small></td>
-      </tr>`).join('') || `<tr><td colspan="6" class="empty">暂无邀请码记录</td></tr>`;
+        <td>${Utils.esc(row.sourceChannel || row.user?.sourceChannel || '—')}<small>${Utils.esc(sourceMeta)}</small></td>
+      </tr>`;
+    }).join('') || `<tr><td colspan="6" class="empty">暂无邀请码记录</td></tr>`;
     return `<table class="data-table compact-table"><thead><tr><th>时间</th><th>邀请码</th><th>事件</th><th>用户</th><th>权益/用量</th><th>来源</th></tr></thead><tbody>${rows}</tbody></table>`;
   },
 
@@ -850,12 +857,25 @@ const App = {
       login_success:'备用账号登录',
       wechat_oauth_logout:'微信退出',
       logout:'退出',
+      invite_code_created:'邀请码创建',
       invite_code_validated:'邀请码校验',
       invite_code_issued:'邀请码发放',
       invite_code_activated:'邀请码开通',
       invite_ledger_imported:'邀请码导入',
       invite_ledger_codes_viewed:'查看邀请码台账',
     })[event] || event || '事件';
+  },
+  opsStatusLabel(status){
+    return ({
+      active:'未发放',
+      issued:'已发放',
+      activated:'已激活',
+      disabled:'已停用',
+      success:'成功',
+      found:'已找到',
+      not_found:'不存在',
+      error:'失败',
+    })[status] || status || '—';
   },
 
   generateInviteCodesFromForm(){

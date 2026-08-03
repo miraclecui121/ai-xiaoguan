@@ -1144,6 +1144,8 @@ function sanitizeInviteLedgerItem(item = {}) {
     createdAt: String(src.createdAt || new Date().toISOString()).slice(0, 40),
     createdBy: redactText(src.createdBy || "system").slice(0, 80),
     issuedAt: String(src.issuedAt || "").slice(0, 40),
+    issuedBy: redactText(src.issuedBy || "").slice(0, 80),
+    inviteLink: redactText(src.inviteLink || "").slice(0, 500),
   };
 }
 
@@ -1166,6 +1168,8 @@ function publicInviteCode(item = {}) {
     createdAt: item.createdAt || "",
     createdBy: item.createdBy || "invite-ledger",
     issuedAt: item.issuedAt || "",
+    issuedBy: item.issuedBy || "",
+    inviteLink: item.inviteLink || "",
   };
 }
 
@@ -2455,6 +2459,8 @@ function buildInviteDetailRows(inviteEntries, ledger, limit) {
     customerLimit: Number(item.customerLimit || 0),
     expiresAt: item.expiresAt || "",
     issuedAt: item.issuedAt || "",
+    issuedBy: item.issuedBy || "",
+    inviteLink: item.inviteLink || "",
     lastUsedAt: item.lastUsedAt || "",
     lastUsedBy: item.lastUsedBy || "",
     lastUsedAccount: item.lastUsedAccount || "",

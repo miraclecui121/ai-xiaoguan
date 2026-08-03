@@ -58,6 +58,7 @@
 .ops-badge.gray{background:#eef2f6;color:#64748b}
 .ops-badge.red{background:#fdeaea;color:#dc2626}
 .ops-loading{opacity:.6;pointer-events:none}
+.ops-copy-btn{white-space:nowrap}
 @media(max-width:980px){
   .ops-topbar{padding:0 16px}
   .ops-main{padding:18px 14px}
