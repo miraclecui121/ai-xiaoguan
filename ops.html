@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>AI销冠 · 运营日志</title>
+  <link rel="stylesheet" href="css/style.css?v=20260803a">
+  <link rel="stylesheet" href="css/ops.css?v=20260803a">
+</head>
+<body class="ops-body">
+  <div class="ops-shell">
+    <header class="ops-topbar">
+      <a class="ops-brand" href="/">
+        <span class="logo-icon">冠</span>
+        <span>AI销冠</span>
+      </a>
+      <div class="ops-topbar-title">
+        <b>运营日志</b>
+        <span>仅凭查询口令访问，不依赖用户登录身份</span>
+      </div>
+    </header>
+
+    <main class="ops-main">
+      <section class="ops-hero">
+        <div>
+          <div class="ops-kicker">Usage Intelligence</div>
+          <h1>看清用户是否真的用起来</h1>
+          <p>把登录、邀请码、提问、专家调用、联网检索、额度消耗和实体识别拆开看，方便判断体验质量与后续转化。</p>
+        </div>
+        <div class="ops-status" id="opsStatus">
+          <span class="ops-dot"></span>
+          <span>等待查询</span>
+        </div>
+      </section>
+
+      <section class="card ops-card">
+        <div class="ops-toolbar">
+          <input class="form-input" id="opsToken" type="password" autocomplete="current-password" placeholder="输入 ADMIN_LOG_TOKEN 查询口令">
+          <select class="form-input" id="opsDays">
+            <option value="1">近 1 天</option>
+            <option value="7" selected>近 7 天</option>
+            <option value="30">近 30 天</option>
+          </select>
+          <input class="form-input" id="opsQuery" placeholder="筛选用户 / 客户 / 问题 / 邀请码">
+          <button class="btn btn-primary" id="opsLoadBtn" type="button">查询</button>
+          <button class="btn btn-ghost" id="opsClearBtn" type="button">清空</button>
+        </div>
+        <div class="ops-hint">查询口令只保存在当前浏览器本地。后端接口仍由 ADMIN_LOG_TOKEN 鉴权，未授权请求只返回 401。</div>
+      </section>
+
+      <section class="ops-result" id="opsResult">
+        <div class="ops-empty">输入查询口令后开始查看用户使用质量。</div>
+      </section>
+    </main>
+  </div>
+
+  <script src="js/ops.js?v=20260803a"></script>
+</body>
+</html>

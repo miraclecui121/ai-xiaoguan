@@ -1,0 +1,69 @@
+.ops-body{
+  min-height:100%;
+  background:linear-gradient(180deg,#082f2c 0,#0f3f3c 260px,#f3f6f5 260px,#f3f6f5 100%);
+}
+.ops-shell{min-height:100vh}
+.ops-topbar{
+  height:64px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 28px;color:#fff;border-bottom:1px solid rgba(255,255,255,.12);
+}
+.ops-brand{display:flex;align-items:center;gap:10px;font-size:19px;font-weight:900}
+.ops-topbar-title{display:flex;flex-direction:column;align-items:flex-end;font-size:12px;color:#c8f2eb;line-height:1.45}
+.ops-topbar-title b{font-size:14px;color:#fff}
+.ops-main{max-width:1400px;margin:0 auto;padding:28px}
+.ops-hero{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:20px;
+  color:#fff;margin-bottom:18px;
+}
+.ops-kicker{font-size:12px;letter-spacing:1.6px;text-transform:uppercase;color:#7dded2;font-weight:900;margin-bottom:6px}
+.ops-hero h1{font-size:28px;line-height:1.25;margin-bottom:8px}
+.ops-hero p{max-width:760px;color:#d8f7ef;font-size:14px}
+.ops-status{
+  min-width:180px;display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.1);
+  border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:10px 12px;font-size:13px;color:#eafff9;
+}
+.ops-dot{width:9px;height:9px;border-radius:50%;background:#f59e0b;box-shadow:0 0 0 5px rgba(245,158,11,.18)}
+.ops-status.ok .ops-dot{background:#22c55e;box-shadow:0 0 0 5px rgba(34,197,94,.16)}
+.ops-status.error .ops-dot{background:#ef4444;box-shadow:0 0 0 5px rgba(239,68,68,.16)}
+.ops-card{margin-bottom:18px}
+.ops-toolbar{display:grid;grid-template-columns:minmax(240px,1.4fr) 130px minmax(220px,1fr) auto auto;gap:10px;align-items:center}
+.ops-hint{font-size:12px;color:var(--text-3);margin-top:10px}
+.ops-result{display:block}
+.ops-empty{
+  background:#fff;border:1px dashed #cfdad8;border-radius:12px;padding:34px;text-align:center;color:var(--text-3);
+}
+.ops-meta{font-size:12px;color:var(--text-2);margin-bottom:12px}
+.ops-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}
+.ops-tabs button{
+  height:34px;padding:0 14px;border-radius:999px;border:1px solid #d9e5e2;background:#fff;color:var(--text-2);font-size:13px;font-weight:800;
+}
+.ops-tabs button.active{background:var(--primary);border-color:var(--primary);color:#fff}
+.ops-stats{display:grid;grid-template-columns:repeat(8,1fr);gap:10px;margin-bottom:16px}
+.ops-stat{background:#fff;border:1px solid #e1e9e7;border-radius:10px;padding:13px}
+.ops-stat b{display:block;font-size:22px;line-height:1.1;color:var(--primary);margin-bottom:5px}
+.ops-stat span{font-size:12px;color:var(--text-2)}
+.ops-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.ops-panel{background:#fff;border-radius:12px;border:1px solid #e1e9e7;padding:16px;box-shadow:var(--shadow)}
+.ops-panel h3,.ops-panel h4{font-size:15px;color:var(--primary);margin-bottom:10px}
+.ops-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:10px}
+.ops-table{width:100%;border-collapse:collapse;font-size:12.5px;min-width:760px}
+.ops-table th{background:#eef3f2;color:#526075;text-align:left;white-space:nowrap;padding:9px 10px;border-bottom:1px solid var(--border);position:sticky;top:0}
+.ops-table td{padding:10px;border-bottom:1px solid var(--border);vertical-align:top}
+.ops-table tr:last-child td{border-bottom:0}
+.ops-table small{display:block;color:var(--text-3);font-size:11px;margin-top:2px;line-height:1.45}
+.ops-code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:#f5faf9;border:1px solid #dce8e5;border-radius:6px;padding:2px 6px;color:var(--primary);white-space:nowrap}
+.ops-question{max-width:520px;white-space:normal;line-height:1.55}
+.ops-badge{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800}
+.ops-badge.green{background:#e7f6ec;color:#16a34a}
+.ops-badge.gray{background:#eef2f6;color:#64748b}
+.ops-badge.red{background:#fdeaea;color:#dc2626}
+.ops-loading{opacity:.6;pointer-events:none}
+@media(max-width:980px){
+  .ops-topbar{padding:0 16px}
+  .ops-main{padding:18px 14px}
+  .ops-hero{flex-direction:column}
+  .ops-toolbar{grid-template-columns:1fr}
+  .ops-stats{grid-template-columns:repeat(2,1fr)}
+  .ops-grid{grid-template-columns:1fr}
+  .ops-topbar-title{display:none}
+}

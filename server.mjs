@@ -154,6 +154,10 @@ const server = createServer(async (req, res) => {
 
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
+    if ((url.pathname === "/ops" || url.pathname === "/ops/") && req.method === "GET") {
+      return serveStatic("/ops.html", req, res);
+    }
+
     if (url.pathname === "/api/platform/status" && req.method === "GET") {
       return sendJson(res, 200, {
         success: true,

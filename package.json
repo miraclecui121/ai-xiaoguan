@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node server.mjs",
-    "check": "node --check server.mjs && node --check js/auth.js && node --check js/store.js && node --check js/app.js && node --check js/ai.js",
+    "check": "node --check server.mjs && node --check js/auth.js && node --check js/store.js && node --check js/app.js && node --check js/ai.js && node --check js/ops.js",
     "build": "npm run check"
   },
   "dependencies": {
