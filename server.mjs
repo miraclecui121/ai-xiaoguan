@@ -1578,11 +1578,29 @@ function sanitizeCloudMessages(input) {
   return input
     .filter((m) => allowed.has(m?.role) && String(m.content || "").trim())
     .slice(-60)
-    .map((m) => ({
-      role: m.role,
-      content: sanitizeCloudValue(String(m.content || "").slice(0, 6000)),
-      ts: String(m.ts || "").slice(0, 40),
-    }));
+    .map((m) => {
+      const out = {
+        role: m.role,
+        content: sanitizeCloudValue(String(m.content || "").slice(0, 6000)),
+        ts: String(m.ts || "").slice(0, 40),
+      };
+      if (m.feedback && typeof m.feedback === "object") {
+        out.feedback = {
+          rating: scrubValue(m.feedback.rating, "feedbackRating"),
+          reason: scrubValue(m.feedback.reason, "feedbackReason"),
+          at: String(m.feedback.at || "").slice(0, 40),
+        };
+      }
+      if (m.meta && typeof m.meta === "object") {
+        out.meta = {
+          expertId: scrubValue(m.meta.expertId, "expertId"),
+          question: redactText(m.meta.question || ""),
+          mode: scrubValue(m.meta.mode, "mode"),
+          answeredAt: String(m.meta.answeredAt || "").slice(0, 40),
+        };
+      }
+      return out;
+    });
 }
 
 function sanitizeWorkspaceData(input) {
@@ -1863,7 +1881,7 @@ function sanitizeAudit(input) {
   const src = input && typeof input === "object" ? input : {};
   [
     "type", "event", "action", "route", "scope", "expertId", "result", "reason",
-    "durationMs", "model", "success", "error",
+    "rating", "feedbackReason", "messageId", "durationMs", "model", "success", "error",
   ].forEach((key) => {
     if (src[key] !== undefined) safe[key] = scrubValue(src[key], key);
   });
@@ -2088,6 +2106,7 @@ async function buildUsageDetail({ days = 7, limit = 300, query = "" } = {}) {
   const loginEntries = sorted.filter((entry) => LOGIN_EVENTS.has(entry.event));
   const visitEntries = sorted.filter((entry) => entry.event === "page_view");
   const inviteEntries = sorted.filter((entry) => String(entry.event || "").startsWith("invite_"));
+  const feedbackEntries = sorted.filter((entry) => entry.event === "ai_answer_feedback");
   const aiEntries = sorted.filter((entry) => entry.kind === "ai-usage");
   const questionEntries = sorted.filter((entry) => (entry.kind === "ai-usage" && entry.question) || entry.event === "ai_question_submitted");
   const searchEntries = aiEntries.filter((entry) => entry.event === "platform_search" || entry.path === "/api/platform/search");
@@ -2174,6 +2193,9 @@ async function buildUsageDetail({ days = 7, limit = 300, query = "" } = {}) {
       logins: loginEntries.length,
       visits: visitEntries.length,
       inviteEvents: inviteEntries.length,
+      feedbacks: feedbackEntries.length,
+      helpfulFeedbacks: feedbackEntries.filter((entry) => (entry.result || entry.rating) === "helpful").length,
+      unhelpfulFeedbacks: feedbackEntries.filter((entry) => (entry.result || entry.rating) === "not_helpful").length,
       questions: questionEntries.length,
       aiCalls: chatEntries.length,
       searches: searchEntries.length,
@@ -2187,6 +2209,7 @@ async function buildUsageDetail({ days = 7, limit = 300, query = "" } = {}) {
     logins: loginEntries.slice(0, limit).map(normalizeEventRow),
     visits: visitEntries.slice(0, limit).map(normalizeEventRow),
     invites: buildInviteDetailRows(inviteEntries, ledger, limit),
+    feedbacks: feedbackEntries.slice(0, limit).map(normalizeFeedbackEntry),
     questions: questionEntries.slice(0, limit).map(normalizeQuestionEntry),
     aiCalls: aiEntries.slice(0, limit).map(normalizeUsageCallRow),
     experts: [...experts.values()]
@@ -2384,6 +2407,23 @@ function normalizeQuestionEntry(entry) {
     tokens: Number(entry.usage?.total_tokens || 0) || 0,
     durationMs: Number(entry.durationMs || 0) || 0,
     error: entry.error || "",
+  };
+}
+
+function normalizeFeedbackEntry(entry) {
+  const customerName = primaryCustomerName(entry);
+  return {
+    ts: entry.ts || "",
+    event: entry.event || "",
+    result: entry.result || entry.rating || "",
+    reason: entry.reason || entry.feedbackReason || "",
+    user: normalizeUser(entry.user),
+    expertId: entry.expertId || "",
+    customerName,
+    customerNames: entry.context?.customerNames || [],
+    opportunityNames: entry.context?.opportunityNames || [],
+    question: redactText(entry.question || ""),
+    message: redactText(entry.message || entry.answerSnippet || ""),
   };
 }
 

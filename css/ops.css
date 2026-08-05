@@ -56,6 +56,7 @@
 .ops-badge{display:inline-flex;align-items:center;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800}
 .ops-badge.green{background:#e7f6ec;color:#16a34a}
 .ops-badge.gray{background:#eef2f6;color:#64748b}
+.ops-badge.orange{background:#fff3e3;color:#c2410c}
 .ops-badge.red{background:#fdeaea;color:#dc2626}
 .ops-loading{opacity:.6;pointer-events:none}
 .ops-copy-btn{white-space:nowrap}

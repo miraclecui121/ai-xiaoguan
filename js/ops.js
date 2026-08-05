@@ -26,6 +26,7 @@
     ai_chat:"AI对话",
     platform_chat:"AI对话",
     platform_search:"联网检索",
+    ai_answer_feedback:"回答反馈",
     admin_usage_detail_viewed:"运营日志查询",
   };
   const STATUS_LABELS = {
@@ -101,6 +102,7 @@
       ["overview","概览"],
       ["logins","登录"],
       ["invites","邀请码"],
+      ["feedbacks","反馈"],
       ["questions","问题"],
       ["experts","专家/联网"],
       ["entities","实体识别"],
@@ -128,6 +130,7 @@
   function renderTab(detail, tab){
     if(tab === "logins") return renderLogins(detail);
     if(tab === "invites") return renderInvites(detail);
+    if(tab === "feedbacks") return renderFeedbacks(detail);
     if(tab === "questions") return renderQuestions(detail);
     if(tab === "experts") return renderExperts(detail);
     if(tab === "entities") return renderEntities(detail);
@@ -138,6 +141,8 @@
     const stats = [
       ["登录事件", c.logins || 0],
       ["问题记录", c.questions || 0],
+      ["回答反馈", c.feedbacks || 0],
+      ["有帮助/不准", `${Number(c.helpfulFeedbacks || 0)}/${Number(c.unhelpfulFeedbacks || 0)}`],
       ["AI调用", c.aiCalls || 0],
       ["联网检索", c.searches || 0],
       ["活跃用户", c.users || 0],
@@ -207,6 +212,29 @@
       </tr>`;
     }).join("");
     return `<div class="ops-panel">${table(["时间","邀请码","事件","用户","权益/用量","来源","操作"], rows, "暂无邀请码记录")}</div>`;
+  }
+  function feedbackLabel(result){
+    return ({
+      helpful:"有帮助",
+      not_helpful:"不够准",
+    })[result] || result || "—";
+  }
+  function feedbackReason(reason){
+    return ({
+      not_accurate:"不够准",
+    })[reason] || reason || "";
+  }
+  function renderFeedbacks(detail){
+    const rows = (detail.feedbacks || []).map(row=>`
+      <tr>
+        <td>${esc(fmtTime(row.ts))}</td>
+        <td>${esc(row.user?.userName || "未知")}<small>${esc(row.user?.account || "")}</small></td>
+        <td><span class="ops-badge ${row.result === "helpful" ? "green" : "orange"}">${esc(feedbackLabel(row.result))}</span><small>${esc(feedbackReason(row.reason))}</small></td>
+        <td>${esc(expertName(row.expertId))}<small>${esc(row.customerName || (row.customerNames || []).join("、") || "未识别客户")}</small></td>
+        <td class="ops-question">${esc(row.question || "")}</td>
+        <td class="ops-question">${esc(row.message || "")}</td>
+      </tr>`).join("");
+    return `<div class="ops-panel">${table(["时间","用户","反馈","专家/客户","问题","回答片段"], rows, "暂无回答反馈")}</div>`;
   }
   function renderQuestions(detail){
     const rows = (detail.questions || []).map(q=>`

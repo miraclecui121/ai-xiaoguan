@@ -89,7 +89,7 @@ const AI = {
       AI.messages = items
         .filter(m=>['user','bot'].includes(m?.role) && String(m.content||'').trim())
         .slice(-60)
-        .map(m=>({ role:m.role, content:String(m.content||'').slice(0,6000) }));
+        .map(m=>AI.cleanStoredMessage(m));
     }catch(e){
       AI.messages = [];
     }
@@ -101,7 +101,7 @@ const AI = {
     const messages = AI.messages
       .filter(m=>!m.loading && ['user','bot'].includes(m.role) && String(m.content||'').trim())
       .slice(-60)
-      .map(m=>({ role:m.role, content:String(m.content||'').slice(0,6000) }));
+      .map(m=>AI.cleanStoredMessage(m));
     try{
       localStorage.setItem(key, JSON.stringify({ updatedAt:Utils.now(), messages }));
     }catch(e){}
@@ -133,7 +133,7 @@ const AI = {
         AI.messages = data.data.messages
           .filter(m=>['user','bot'].includes(m?.role) && String(m.content||'').trim())
           .slice(-60)
-          .map(m=>({ role:m.role, content:String(m.content||'').slice(0,6000) }));
+          .map(m=>AI.cleanStoredMessage(m));
         AI._cloudLoadedKey = threadKey;
         AI.saveConversation();
         AI.renderMessages();
@@ -145,6 +145,29 @@ const AI = {
     }finally{
       AI._cloudLoading = false;
     }
+  },
+
+  cleanStoredMessage(m){
+    const out = {
+      role:m.role,
+      content:String(m.content||'').slice(0,6000),
+    };
+    if(m.feedback && typeof m.feedback === 'object'){
+      out.feedback = {
+        rating:String(m.feedback.rating||'').slice(0,40),
+        reason:String(m.feedback.reason||'').slice(0,80),
+        at:String(m.feedback.at||'').slice(0,40),
+      };
+    }
+    if(m.meta && typeof m.meta === 'object'){
+      out.meta = {
+        expertId:String(m.meta.expertId||'').slice(0,80),
+        question:String(m.meta.question||'').slice(0,600),
+        mode:String(m.meta.mode||'').slice(0,80),
+        answeredAt:String(m.meta.answeredAt||'').slice(0,40),
+      };
+    }
+    return out;
   },
 
   queueCloudConversationSync(messages){
@@ -526,7 +549,7 @@ const AI = {
     el.style.overflowY=el.scrollHeight>max?'auto':'hidden';
   },
 
-  // 切换专家选中状态（点击专家卡片 → 立即运行专家分析）
+  // 切换专家选中状态（点击专家卡片 → 引导用户补充真实问题）
   toggleExpert(id){
     const existing=AI.ctx.experts.find(x=>x.id===id);
     if(existing){
@@ -538,7 +561,7 @@ const AI = {
       const inp=document.getElementById('aiInput');
       if(inp)inp.focus();
     }else{
-      // 未选中 → 替换已有专家，立即运行
+      // 未选中 → 替换已有专家，引导用户补充真实场景后再发送
       AI.ctx.experts=[];
       const ex=Experts.get(id);
       if(!ex)return;
@@ -547,9 +570,11 @@ const AI = {
       AI.updateCtxChips();
       AI.updateExpertPrompt();
       const inp=document.getElementById('aiInput');
-      if(inp)inp.value='';
-      // 立即发送：有具体对象时跑对象级报告；无对象时跑专家通用方法论对话
-      AI.send();
+      if(inp){
+        inp.placeholder=`已选择${ex.name}，请输入你的真实客户/商机问题...`;
+        inp.focus();
+      }
+      Toast.show(`已选择${ex.name}视角，请补充具体问题后发送`, 'info');
     }
   },
 
@@ -578,8 +603,11 @@ const AI = {
     AI.updateCtxChips();
     AI.updateExpertPrompt();
     const inp=document.getElementById('aiInput');
-    if(inp)inp.value='';
-    AI.send();
+    if(inp){
+      inp.placeholder=`已选择${ex.name}，请输入你的真实销售问题...`;
+      inp.focus();
+    }
+    Toast.show(`已选择${ex.name}视角，请补充具体问题后发送`, 'info');
   },
 
   welcome(){
@@ -593,10 +621,11 @@ const AI = {
     <div>
       <div class="ai-kicker">AI销冠工作台</div>
       <h3>把客户数据转成下一步销售动作</h3>
-      <p>当前数据底座包含 ${Store.customers().length} 个客户、${Store.contacts().length} 个联系人、${Store.opportunities().length} 个商机。你可以直接提问，也可以先引用客户/商机，再选择一个专业视角分析。</p>
+      <p>当前数据底座包含 ${Store.customers().length} 个客户、${Store.contacts().length} 个联系人、${Store.opportunities().length} 个商机。先选一个正在发生的销售场景，再补充你的客户、行业、名单或卡点。</p>
     </div>
     <div class="ai-hero-status">${llmHint}</div>
   </div>
+  ${AI.renderScenarioGrid()}
   ${AI.renderCapabilityGrid()}
   <div class="ai-workflow-strip">
     <div><b>1</b><span>引用对象</span><small>选择客户、联系人或商机</small></div>
@@ -606,6 +635,97 @@ const AI = {
 </div>`;
   },
 
+  starterScenarios(){
+    return [
+      {
+        id:'visit',
+        title:'我要拜访一个客户',
+        desc:'准备见客户、关键人、老板或业务负责人',
+        expertId:'sales-visit',
+        prompt:'我准备拜访一个客户。客户是【客户名称】，我要卖的是【产品/服务】，这次能见到【职位/姓名】。请帮我准备拜访目标、问题清单、风险点和会后推进动作。',
+      },
+      {
+        id:'lead-list',
+        title:'我有一批名单',
+        desc:'判断哪些客户优先打，第一触达怎么做',
+        expertId:'lead-dev',
+        prompt:'我有一批客户名单，目标行业是【行业】，卖的是【产品/服务】。请帮我设计筛选优先级、首轮触达话术和判断客户是否值得继续跟进的标准。',
+      },
+      {
+        id:'deal-push',
+        title:'客户报价后卡住了',
+        desc:'已报价、等领导拍板、竞品进入或客户犹豫',
+        expertId:'win-strategy',
+        prompt:'客户已经有意向，但现在卡在【卡点：价格/领导拍板/竞品/预算/时机】。目前进展是【补充现状】。请帮我判断赢面、下一步推进动作和需要客户做出的明确承诺。',
+      },
+      {
+        id:'market-entry',
+        title:'我要进入一个新行业',
+        desc:'判断行业机会、切入话题和资源投入优先级',
+        expertId:'industry-assess',
+        prompt:'我想进入【行业/区域】市场，客户类型是【客户类型】，我们卖的是【产品/服务】。请帮我判断这个市场是否值得投入、优先切入哪类客户、需要验证哪些信息。',
+      },
+      {
+        id:'value',
+        title:'客户觉得价值不明显',
+        desc:'把功能转成收益、ROI、风险降低和决策语言',
+        expertId:'value-marketing',
+        prompt:'客户觉得我们的产品价值不明显。我们卖的是【产品/服务】，客户现在的业务问题是【问题】。请帮我把价值讲成客户听得懂的收益、风险降低和ROI表达。',
+      },
+      {
+        id:'import',
+        title:'我要导入客户名单',
+        desc:'CSV 或表格粘贴，先把自己的数据放进来',
+        action:'import-customers',
+      },
+    ];
+  },
+
+  renderScenarioGrid(){
+    const cards = AI.starterScenarios().map(s=>`
+      <button class="ai-scenario-card" onclick="AI.startScenario('${s.id}')">
+        <b>${s.title}</b>
+        <span>${s.desc}</span>
+      </button>`).join('');
+    return `<div class="ai-scenario-section">
+      <div class="ai-section-title">从真实销售场景开始</div>
+      <div class="ai-scenario-grid">${cards}</div>
+    </div>`;
+  },
+
+  startScenario(id){
+    const scenario = AI.starterScenarios().find(x=>x.id===id);
+    if(!scenario) return;
+    if(typeof Audit!=='undefined'){
+      Audit.log('ai_scenario_selected', {
+        action:'ai_scenario_selected',
+        result:scenario.id,
+        expertId:scenario.expertId || '',
+        message:scenario.title,
+      });
+    }
+    if(scenario.action === 'import-customers'){
+      Toast.show('已进入客户导入，请上传 CSV 或粘贴表格文本', 'info');
+      App.navigate('customer');
+      setTimeout(()=>{ if(typeof Customer!=='undefined' && Customer.openImport) Customer.openImport(); }, 250);
+      return;
+    }
+    AI.ctx.experts = [];
+    const ex = Experts.get(scenario.expertId);
+    if(ex) AI.ctx.experts.push({ id:ex.id, name:ex.name+'专家', icon:ex.icon, color:ex.color });
+    AI.updateExpertCards();
+    AI.updateCtxChips();
+    AI.updateExpertPrompt();
+    const input = document.getElementById('aiInput');
+    if(input){
+      input.value = scenario.prompt || '';
+      AI.autoResizeInput(input);
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+    Toast.show('已填入场景问题，请把【】里的内容改成你的真实情况后发送', 'info');
+  },
+
   renderCapabilityGrid(){
     const groups=[
       {title:'选市场', items:['industry-assess','industry-insight'], note:'判断行业是否值得投入，以及该从什么变化切入客户。'},
@@ -613,7 +733,9 @@ const AI = {
       {title:'推项目', items:['solution','value-marketing','win-strategy'], note:'把需求转成方案、价值和赢单推进策略。'},
       {title:'做经营', items:['customer-mgmt','sop-design'], note:'沉淀长期账户经营节奏和可复制的过程标准。'},
     ];
-    return `<div class="ai-capability-grid">${groups.map(g=>`
+    return `<div class="ai-capability-section">
+      <div class="ai-section-title">也可以直接选择专业视角</div>
+      <div class="ai-capability-grid">${groups.map(g=>`
       <section class="ai-capability-group">
         <div class="ai-capability-title">${g.title}</div>
         <p>${g.note}</p>
@@ -626,10 +748,12 @@ const AI = {
             </button>`;
           }).join('')}
         </div>
-      </section>`).join('')}</div>`;
+      </section>`).join('')}</div>
+    </div>`;
   },
 
   suggestionChips(){
+    const scenarioChips=AI.starterScenarios().map(s=>({label:s.title, id:s.id}));
     const mentionChips=[
       {label:'＠ 客户', type:'customer'},
       {label:'＠ 商机', type:'opportunity'},
@@ -647,16 +771,15 @@ const AI = {
       {label:'客户经营', id:'customer-mgmt'},
       {label:'销售SOP', id:'sop-design'},
     ];
-    const analysisChips=['商机概览','重点关注商机','🩺 商机健康度','📈 趋势分析','🔻 漏斗深度分析','📊 赢输归因分析','⚡ 销售效能分析','🚨 预警分析','赢单预测','沉睡客户','下一步行动'];
     let html='';
+    scenarioChips.forEach(c=>{
+      html+=`<span class="ai-chip ai-chip-scenario" onclick="AI.startScenario('${c.id}')">${c.label}</span>`;
+    });
     mentionChips.forEach(c=>{
       html+=`<span class="ai-chip ai-chip-mention" onclick="AI.openMention('${c.type}')">${c.label}</span>`;
     });
     expertChips.forEach(c=>{
       html+=`<span class="ai-chip ai-chip-expert" onclick="AI.quickExpert('${c.id}')">${c.label}</span>`;
-    });
-    analysisChips.forEach(c=>{
-      html+=`<span class="ai-chip" onclick="AI.quickAsk('${c}')">${c}</span>`;
     });
     return html;
   },
@@ -766,7 +889,18 @@ const AI = {
 
   finishLoadingAnswer(content){
     const idx = AI.messages.length - 1;
-    AI.messages[idx] = { role:'bot', content };
+    const loading = AI.messages[idx] || {};
+    AI.messages[idx] = {
+      role:'bot',
+      content,
+      feedback:null,
+      meta:{
+        expertId:String(loading.expertId||''),
+        question:String(loading.question||''),
+        mode:String(loading.mode||''),
+        answeredAt:Utils.now(),
+      },
+    };
     AI._lastAnswerFocusAt = Date.now();
     AI.renderMessages({ scroll:'answerStart', targetIndex:idx });
   },
@@ -806,6 +940,11 @@ const AI = {
     if(!input)return; // DOM尚未就绪
     const q=input.value.trim().replace(/@$/,'');
     if(!q && !AI.ctx.customers.length && !AI.ctx.opportunities.length && !AI.ctx.experts.length)return;
+    if(!q && !AI.ctx.customers.length && !AI.ctx.opportunities.length && AI.ctx.experts.length){
+      Toast.show('请补充一个具体销售问题后再发送', 'warn');
+      input.focus();
+      return;
+    }
 
     // 构建带上下文的用户消息显示
     const ctxTags=[
@@ -1033,14 +1172,77 @@ const AI = {
         </div>`;
       }
       const bubbleClass = String(m.content||'').startsWith('::ai-html\n') ? 'ai-bubble ai-bubble-welcome' : 'ai-bubble';
+      const isWelcome = String(m.content||'').startsWith('::ai-html\n');
+      if(m.role === 'bot'){
+        return `<div class="ai-msg ${m.role}" data-msg-index="${index}">
+          <div class="ai-avatar ${m.role}">冠</div>
+          <div class="ai-msg-stack">
+            <div class="${bubbleClass}">${AI.formatContent(m.content)}</div>
+            ${isWelcome ? '' : AI.renderFeedbackBar(m,index)}
+          </div>
+        </div>`;
+      }
       return `<div class="ai-msg ${m.role}" data-msg-index="${index}">
-        <div class="ai-avatar ${m.role}">${m.role==='bot'?'冠':'我'}</div>
+        <div class="ai-avatar ${m.role}">我</div>
         <div class="${bubbleClass}">${AI.formatContent(m.content)}</div>
       </div>`;
     }).join('');
     AI.applyMessageScroll(box, options, previousScrollTop, previousScrollHeight);
     AI.syncLoadingTicker();
     AI.saveConversation();
+  },
+
+  renderFeedbackBar(message, index){
+    const feedback = message.feedback || null;
+    if(feedback?.rating){
+      const text = feedback.rating === 'helpful' ? '已标记：有帮助' : '已标记：不够准';
+      return `<div class="ai-feedback-bar submitted">
+        <span>${text}</span>
+        <button type="button" onclick="AI.clearFeedback(${index})">修改</button>
+      </div>`;
+    }
+    return `<div class="ai-feedback-bar">
+      <span>这次回答有帮助吗？</span>
+      <button type="button" onclick="AI.submitFeedback(${index},'helpful','')">有帮助</button>
+      <button type="button" onclick="AI.submitFeedback(${index},'not_helpful','not_accurate')">不够准</button>
+    </div>`;
+  },
+
+  submitFeedback(index, rating, reason=''){
+    const i = Number(index);
+    const message = AI.messages[i];
+    if(!message || message.role !== 'bot' || message.loading) return;
+    const previousUser = AI.messages.slice(0,i).reverse().find(m=>m.role==='user');
+    message.feedback = {
+      rating,
+      reason,
+      at:Utils.now(),
+    };
+    if(typeof Audit!=='undefined'){
+      Audit.log('ai_answer_feedback', {
+        action:'ai_answer_feedback',
+        result:rating,
+        rating,
+        reason,
+        feedbackReason:reason,
+        expertId:message.meta?.expertId || '',
+        question:message.meta?.question || previousUser?.content || '',
+        message:String(message.content||'').slice(0,800),
+        context:Audit.context(),
+      });
+    }
+    AI.saveConversation();
+    AI.renderMessages({ scroll:'preserve' });
+    Toast.show(rating === 'helpful' ? '已记录：有帮助' : '已记录：不够准', 'success');
+  },
+
+  clearFeedback(index){
+    const i = Number(index);
+    const message = AI.messages[i];
+    if(!message || message.role !== 'bot') return;
+    message.feedback = null;
+    AI.saveConversation();
+    AI.renderMessages({ scroll:'preserve' });
   },
 
   applyMessageScroll(box, options={}, previousScrollTop=0, previousScrollHeight=0){
@@ -2637,11 +2839,11 @@ _报告基于CRM系统截至2026年7月18日存量数据生成。保护期倒计
   </div>
   ${AI.renderCapabilityGrid()}
   <div class="ai-help-list">
-    <span>可以直接问：商机概览</span>
-    <span>重点关注商机</span>
-    <span>赢单预测</span>
-    <span>沉睡客户</span>
-    <span>下一步行动</span>
+    <span>可以直接问：明天要拜访某客户，我该准备什么</span>
+    <span>这批客户名单谁优先跟</span>
+    <span>客户报价后卡住，下一步怎么推</span>
+    <span>客户觉得贵，价值怎么讲</span>
+    <span>我要进入某行业，先验证什么</span>
   </div>
 </div>`;
   },
@@ -2650,6 +2852,6 @@ _报告基于CRM系统截至2026年7月18日存量数据生成。保护期倒计
     // 尝试匹配客户名部分
     const custMatch=Store.customers().find(c=>c.name.includes(q)||q.includes(c.shortName||''));
     if(custMatch)return `已识别到客户「${custMatch.name}」，正在分析…\n\n`+AI.analyzeCustomer(custMatch.id);
-    return `我理解你想了解「${q}」。\n\n目前我可以分析：商机概览、重点关注、赢单预测、沉睡客户、下一步行动、销售漏斗、客户价值排行、本周待办等。\n\n💡 试试点击下方快捷问题，或直接说"分析XX客户"。`;
+    return `我理解你想了解「${q}」。\n\n为了给出更有用的销售判断，请补充一个具体场景：\n\n1. 客户是谁，或者客户类型是什么\n2. 你卖的产品/服务是什么\n3. 现在卡在拜访、线索、报价、方案、决策还是续约\n4. 你希望我帮你判断“值不值得跟、怎么开口、怎么推进、怎么赢单”中的哪一类\n\n你也可以直接这样问：\n“我明天要拜访【客户】，卖的是【产品】，能见到【角色】，请帮我准备拜访问题和推进动作。”`;
   }
 };
