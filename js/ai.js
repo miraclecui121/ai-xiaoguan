@@ -4,6 +4,8 @@ const AI = {
   lastLLMError: null,
   lastSearchEvidence: null,
   autoSearch: true,
+  attachments: [],
+  focusedChat: false,
   _cloudLoadedKey: '',
   _cloudLoading: false,
   _cloudSyncTimer: null,
@@ -81,6 +83,7 @@ const AI = {
     AI.mention = { open:false, tab:'customer', query:'' };
     AI.lastLLMError = null;
     AI.lastSearchEvidence = null;
+    AI.attachments = [];
     AI.messages = [];
     if(!key || !AI.canPersistConversation()) return;
     try{
@@ -470,6 +473,7 @@ const AI = {
     <div class="page-head">
       <div><div class="page-title ai-page-title"><span class="page-mark">冠</span><span class="ai-page-title-text">AI销冠助手</span> <span class="badge badge-gold">销售决策引擎</span> ${AI.renderLLMStatusBadge()}</div>
       <div class="page-desc">围绕客户、联系人、商机数据生成销售判断，并把判断落到下一步动作</div></div>
+      <button class="btn btn-ghost ai-focus-toggle" onclick="AI.toggleFocusMode()">${AI.focusedChat?'退出专注':'专注对话'}</button>
     </div>
     <!-- 销售决策能力面板 -->
     <div class="expert-panel${AI.collapsed.experts?' collapsed':''}">
@@ -486,7 +490,7 @@ const AI = {
           </div>
         </div>`).join('')}</div>
     </div>
-    <div class="ai-layout">
+    <div class="ai-layout${AI.focusedChat?' ai-layout-focus':''}">
       <div class="ai-chat">
         <div class="ai-msgs" id="aiMsgs"></div>
         <div class="ai-suggestions${AI.collapsed.suggestions?' collapsed':''}" id="aiSuggestions">
@@ -497,11 +501,14 @@ const AI = {
           <div class="ai-suggestions-body">${AI.suggestionChips()}</div>
         </div>
         <div id="ctxChipsBar" class="ctx-chips-bar" style="display:${hasChips?'flex':'none'}">${AI.renderCtxChips()}</div>
+        <div id="aiAttachmentBar" class="ai-attachment-bar" style="display:${AI.attachments.length?'flex':'none'}">${AI.renderAttachmentChips()}</div>
         <div id="expertPromptPanel">${AI.renderExpertPrompt()}</div>
         ${AI.renderMentionPopup()}
         <div class="ai-input-bar">
           <button class="ai-mention-btn" onclick="AI.openMention('customer')" title="＠提及客户/商机/专家">＠</button>
           <button class="ai-search-toggle${AI.autoSearch?' active':''}" onclick="AI.toggleAutoSearch()" title="自动联网：开启后，涉及客户背景、人物偏好、公开动态、政策招投标等问题会自动检索">联网</button>
+          <input id="aiFileInput" class="ai-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden onchange="AI.handleFileUpload(event)">
+          <button class="ai-tool-btn" onclick="AI.openFilePicker()" title="上传聊天截图或销售素材图片，本轮临时使用，不进入云端历史">图片</button>
           <textarea id="aiInput" rows="1" placeholder="输入问题，或点击＠引用客户/商机/专家…" onkeydown="AI.handleInputKeydown(event)" oninput="AI.autoResizeInput(this)" autofocus></textarea>
           <button class="btn btn-primary" onclick="AI.send()">发送</button>
         </div>
@@ -520,6 +527,89 @@ const AI = {
     Toast.show(AI.autoSearch ? '已开启自动联网增强' : '已关闭自动联网增强', 'info');
     const input=document.getElementById('aiInput');
     if(input) input.focus();
+  },
+
+  toggleFocusMode(){
+    AI.focusedChat = !AI.focusedChat;
+    App.render();
+    setTimeout(()=>AI.renderMessages({scroll:'preserve'}), 0);
+  },
+
+  openFilePicker(){
+    const input = document.getElementById('aiFileInput');
+    if(input) input.click();
+  },
+
+  handleFileUpload(event){
+    const files = Array.from(event?.target?.files || []);
+    if(!files.length) return;
+    const allowed = /^image\/(png|jpe?g|webp|gif)$/i;
+    const remain = Math.max(0, 6 - AI.attachments.length);
+    const selected = files.filter(f=>allowed.test(f.type)).slice(0, remain);
+    if(!selected.length){
+      Toast.show(remain ? '当前只支持图片截图，Excel/PDF 后续单独评估' : '本轮最多添加 6 张图片', 'warn');
+      if(event?.target) event.target.value = '';
+      return;
+    }
+    selected.forEach(file=>{
+      AI.attachments.push({
+        id: 'att_' + Date.now() + '_' + Math.random().toString(16).slice(2),
+        name: file.name || '聊天截图',
+        type: file.type || 'image',
+        size: file.size || 0,
+      });
+    });
+    AI.updateAttachmentBar();
+    const input = document.getElementById('aiInput');
+    if(input){
+      input.placeholder = '已添加截图。请补充截图里的关键对话，或说明你要判断客户意向/需求的具体问题…';
+      input.focus();
+    }
+    Toast.show(`已添加 ${selected.length} 张图片。本轮临时使用，不保存到云端历史`, 'success');
+    if(files.length !== selected.length) Toast.show('Excel/PDF 和超出数量的文件已忽略，后续单独评估', 'info');
+    if(event?.target) event.target.value = '';
+  },
+
+  renderAttachmentChips(){
+    return AI.attachments.map(a=>`
+      <span class="ai-attachment-chip" title="${Utils.esc(a.name)}">
+        <b>图</b><span>${Utils.esc(a.name)}</span><i onclick="AI.removeAttachment('${a.id}')">×</i>
+      </span>`).join('') + (AI.attachments.length ? `<button class="ctx-chip-clear" onclick="AI.clearAttachments()">清空图片</button>` : '');
+  },
+
+  updateAttachmentBar(){
+    const bar = document.getElementById('aiAttachmentBar');
+    if(!bar) return;
+    bar.innerHTML = AI.renderAttachmentChips();
+    bar.style.display = AI.attachments.length ? 'flex' : 'none';
+  },
+
+  removeAttachment(id){
+    AI.attachments = AI.attachments.filter(a=>a.id!==id);
+    AI.updateAttachmentBar();
+  },
+
+  clearAttachments(showToast=true){
+    AI.attachments = [];
+    AI.updateAttachmentBar();
+    if(showToast) Toast.show('已清空本轮图片', 'info');
+  },
+
+  attachmentDisplayLabel(items=AI.attachments){
+    if(!items.length) return '';
+    return `已附图片：${items.map(a=>a.name).join('、')}`;
+  },
+
+  buildAttachmentNote(items=AI.attachments){
+    if(!items.length) return '';
+    const list = items.map((a,i)=>`${i+1}. ${a.name}（${a.type || 'image'}，${Math.ceil((a.size||0)/1024)}KB）`).join('\n');
+    return [
+      '## 本轮用户上传了图片附件',
+      list,
+      '',
+      '这些图片可能是客户微信聊天截图、销售沟通记录或产品资料。当前版本先把图片作为本轮临时销售素材，不进入云端对话历史；如果当前模型/代理无法直接识别图片，请明确让用户粘贴截图中的关键对话文本，不要假装已经读图。',
+      '回答时优先帮助用户判断：客户真实意向、水温阶段、缺失信息、白嫖/比价/拖延风险、下一步最该问什么，以及可直接发送的回复。',
+    ].join('\n');
   },
 
   // 输入框按键处理
@@ -647,9 +737,16 @@ const AI = {
       {
         id:'lead-list',
         title:'我有一批名单',
-        desc:'判断哪些客户优先打，第一触达怎么做',
+        desc:'判断优先级、首轮触达和筛选标准',
         expertId:'lead-dev',
         prompt:'我有一批客户名单，目标行业是【行业】，卖的是【产品/服务】。请帮我设计筛选优先级、首轮触达话术和判断客户是否值得继续跟进的标准。',
+      },
+      {
+        id:'lead-judgment',
+        title:'客户回复后，值不值得跟',
+        desc:'粘贴聊天记录或上传截图，判断意向水温',
+        expertId:'lead-dev',
+        prompt:'请按「线索判断助手」帮我判断这个线索。\n\n我的业务/产品：【补充你卖什么、价格/交付方式】\n目标客户：【补充客户类型】\n客户最近回复/聊天记录：【粘贴文字；也可以点击“图片”上传聊天截图后补充关键对话】\n\n请输出：\n1. 当前意向水温（0-30/30-60/60-90/90-100）\n2. 已确认信息和缺失信息\n3. 这是真需求、比价、试探、拖延，还是白嫖方案风险\n4. 下一步最值得问的 3 个问题\n5. 建议继续跟进、升级、暂缓还是婉拒\n6. 一段我可以直接发给客户的自然回复',
       },
       {
         id:'deal-push',
@@ -939,8 +1036,12 @@ const AI = {
     const input=document.getElementById('aiInput');
     if(!input)return; // DOM尚未就绪
     const q=input.value.trim().replace(/@$/,'');
-    if(!q && !AI.ctx.customers.length && !AI.ctx.opportunities.length && !AI.ctx.experts.length)return;
-    if(!q && !AI.ctx.customers.length && !AI.ctx.opportunities.length && AI.ctx.experts.length){
+    const attachmentSnapshot = AI.attachments.slice();
+    const attachmentNote = AI.buildAttachmentNote(attachmentSnapshot);
+    const effectiveQ = q || (attachmentSnapshot.length ? '请分析我上传的销售沟通截图/素材。' : '');
+    const modelQ = attachmentNote ? [effectiveQ, attachmentNote].filter(Boolean).join('\n\n') : effectiveQ;
+    if(!effectiveQ && !AI.ctx.customers.length && !AI.ctx.opportunities.length && !AI.ctx.experts.length)return;
+    if(!effectiveQ && !AI.ctx.customers.length && !AI.ctx.opportunities.length && AI.ctx.experts.length){
       Toast.show('请补充一个具体销售问题后再发送', 'warn');
       input.focus();
       return;
@@ -952,9 +1053,11 @@ const AI = {
       ...AI.ctx.customers.map(c=>`${c.name}`),
       ...AI.ctx.opportunities.map(o=>`${o.name}`),
     ];
-    const displayQ=ctxTags.length?`${ctxTags.join('  ')}${q?'  |  '+q:''}`:q;
+    const attachmentLabel = AI.attachmentDisplayLabel(attachmentSnapshot);
+    const displayQ=[ctxTags.length ? ctxTags.join('  ') : '', q, attachmentLabel].filter(Boolean).join('  |  ');
     AI.messages.push({role:'user',content:displayQ});
     input.value='';
+    AI.clearAttachments(false);
     AI.autoResizeInput(input);
     AI.renderMessages();
 
@@ -969,15 +1072,15 @@ const AI = {
     if(typeof Audit!=='undefined'){
       Audit.log('ai_question_submitted', {
         action:'ai_question',
-        question:q || displayQ,
+        question:modelQ || displayQ,
         context:Audit.context(),
-        expertId:expertId || AI.detectExpertIntent(q) || null,
+        expertId:expertId || AI.detectExpertIntent(modelQ) || null,
       });
     }
 
     // 场景1: 选择了专家 + 客户/商机 → 优先使用 LLM + 已选对象上下文
     if(hasExpert && (hasCustomer || hasOpp)){
-      AI.pushLoading({expertId, question:q, mode:'selected-context'});
+      AI.pushLoading({expertId, question:effectiveQ, mode:'selected-context'});
       setTimeout(async ()=>{
         // 构建context ID
         let ctxId='';
@@ -996,16 +1099,16 @@ const AI = {
         if(shouldUseLLM){
           ans=await AI.tryLLMWithExpert(
             expertId,
-            q||`请基于已选对象「${ctxLabel}」做专业分析`,
+            modelQ||`请基于已选对象「${ctxLabel}」做专业分析`,
             contextText
           );
           if(ans) mode='真实LLM对话（已接入CRM上下文）';
         }
         if(!ans){
-          if(q && !AI.isLLMReady()){
+          if(modelQ && !AI.isLLMReady()){
             ans=AI.llmConfigRequiredAnswer('专家追问');
             mode='需要配置API';
-          }else if(shouldUseLLM && q){
+          }else if(shouldUseLLM && modelQ){
             ans=AI.llmFailureAnswer('专家追问');
             mode='真实LLM调用失败';
           }else{
@@ -1021,22 +1124,22 @@ const AI = {
 
     // 场景2: 选择了专家但没选客户/商机 → 尝试用LLM+专家提示词进行通用分析
     if(hasExpert && !hasCustomer && !hasOpp){
-      AI.pushLoading({expertId, question:q, mode:'expert-general'});
+      AI.pushLoading({expertId, question:effectiveQ, mode:'expert-general'});
       setTimeout(async ()=>{
         let ans = null;
         // 优先使用LLM+专家提示词进行思考分析
         const shouldUseLLM = AI.isLLMReady() && (ex._onlineMethodology || ex._secretPrompt);
         if(shouldUseLLM){
-          ans = await AI.tryLLMWithExpert(expertId, q||'请基于您的专业知识框架，为我做一个概览分析');
+          ans = await AI.tryLLMWithExpert(expertId, modelQ||'请基于您的专业知识框架，为我做一个概览分析');
         }
         // LLM不可用时，先尝试本地专家引擎；若缺少对象，再回到线上方法论通用答复
         if(!ans){
-          ans = q && !AI.isLLMReady()
+          ans = modelQ && !AI.isLLMReady()
             ? AI.llmConfigRequiredAnswer('专家对话')
-            : (shouldUseLLM && q ? AI.llmFailureAnswer('专家对话') : Experts.run(expertId, null));
+            : (shouldUseLLM && modelQ ? AI.llmFailureAnswer('专家对话') : Experts.run(expertId, null));
         }
         if(AI.isMissingContextAnswer(ans)){
-          ans = AI.genericExpertAnswer(expertId, q||'你能做哪些事情');
+          ans = AI.genericExpertAnswer(expertId, modelQ||'你能做哪些事情');
         }
         // 最终兜底
         if(!ans || ans==='未找到该专家'){
@@ -1051,18 +1154,18 @@ const AI = {
 
     // 场景3: 选了客户/商机但没选专家 → 针对性分析该客户/商机
     if(!hasExpert && (hasCustomer || hasOpp)){
-      AI.pushLoading({question:q, mode:'object-analysis'});
+      AI.pushLoading({question:effectiveQ, mode:'object-analysis'});
       setTimeout(()=>{
         let ans='';
         if(hasOpp){
           ans=AI.analyzeOpp(oppId);
         }else{
           // 客户分析，结合问题关键词判断是否需要调用专家
-          if(/洞察|insight/.test(q)){
+          if(/洞察|insight/.test(modelQ)){
             ans=AI.customerInsight(customerId);
           }else{
             ans=AI.analyzeCustomer(customerId);
-            if(q) ans+=`\n\n---\n\n**针对「${q}」的补充分析**：\n`+AI.analyze(q);
+            if(modelQ) ans+=`\n\n---\n\n**针对「${effectiveQ}」的补充分析**：\n`+AI.analyze(modelQ);
           }
         }
         AI.finishLoadingAnswer(ans);
@@ -1073,39 +1176,39 @@ const AI = {
     }
 
     // 场景4: 无上下文 → 检测专家关键词/自然语言意图，用LLM+专家提示词进行通用分析
-    const intentExpertId=AI.detectExpertIntent(q);
-    const isExpert=intentExpertId||/客户洞察|行业评估|行业洞察|线索开发|客户拜访|销售拜访|解决方案|价值营销|赢单策略|商机策略|客户经营|销售SOP|SOP设计|深度洞察|洞察分析/.test(q);
+    const intentExpertId=AI.detectExpertIntent(modelQ);
+    const isExpert=intentExpertId||/客户洞察|行业评估|行业洞察|线索开发|线索判断|意向识别|需求判断|客户回复|聊天截图|客户拜访|销售拜访|解决方案|价值营销|赢单策略|商机策略|客户经营|销售SOP|SOP设计|深度洞察|洞察分析/.test(modelQ);
     if(isExpert){
       const exId=intentExpertId||(
-                 q.includes('行业评估')?'industry-assess':
-                 q.includes('行业洞察')?'industry-insight':
-                 q.includes('线索开发')?'lead-dev':
-                 q.includes('客户拜访')||q.includes('销售拜访')?'sales-visit':
-                 q.includes('赢单策略')||q.includes('商机策略')?'win-strategy':
-                 q.includes('解决方案')?'solution':
-                 q.includes('价值营销')?'value-marketing':
-                 q.includes('客户经营')?'customer-mgmt':
-                 q.includes('销售SOP')||q.includes('SOP')?'sop-design':'customer-insight');
+                 modelQ.includes('行业评估')?'industry-assess':
+                 modelQ.includes('行业洞察')?'industry-insight':
+                 /线索开发|线索判断|意向识别|需求判断|客户回复|聊天截图/.test(modelQ)?'lead-dev':
+                 modelQ.includes('客户拜访')||modelQ.includes('销售拜访')?'sales-visit':
+                 modelQ.includes('赢单策略')||modelQ.includes('商机策略')?'win-strategy':
+                 modelQ.includes('解决方案')?'solution':
+                 modelQ.includes('价值营销')?'value-marketing':
+                 modelQ.includes('客户经营')?'customer-mgmt':
+                 modelQ.includes('销售SOP')||modelQ.includes('SOP')?'sop-design':'customer-insight');
       const ex2=Experts.get(exId);
       if(!ex2){
         // 专家不存在，走通用LLM兜底
-        AI.pushLoading({question:q, mode:'fallback-chat'});
+        AI.pushLoading({question:effectiveQ, mode:'fallback-chat'});
         setTimeout(async ()=>{
-          const llmAns=await AI.tryLLM(q);
-          const ans=llmAns||AI.analyze(q);
+          const llmAns=await AI.tryLLM(modelQ);
+          const ans=llmAns||AI.analyze(modelQ);
           AI.finishLoadingAnswer(AI.searchEvidencePrefix()+ans);
           const side=document.getElementById('aiSide');
           if(side)side.innerHTML=AI.renderInsights();
         },400);
         return;
       }
-      AI.pushLoading({expertId:exId, question:q, mode:'intent-expert'});
+      AI.pushLoading({expertId:exId, question:effectiveQ, mode:'intent-expert'});
       setTimeout(async ()=>{
         let ans=null;
         // 优先使用LLM+专家提示词进行思考分析
         const shouldUseLLM = AI.isLLMReady() && (ex2._onlineMethodology || ex2._secretPrompt);
         if(shouldUseLLM){
-          ans=await AI.tryLLMWithExpert(exId, q);
+          ans=await AI.tryLLMWithExpert(exId, modelQ);
         }
         // LLM不可用，尝试本地专家引擎；若缺少对象，再回到线上方法论通用答复
         if(!ans){
@@ -1114,7 +1217,7 @@ const AI = {
             : (shouldUseLLM ? AI.llmFailureAnswer('专家对话') : Experts.run(exId, null));
         }
         if(AI.isMissingContextAnswer(ans)){
-          ans=AI.genericExpertAnswer(exId, q);
+          ans=AI.genericExpertAnswer(exId, modelQ);
         }
         // 最终兜底
         if(!ans||ans==='未找到该专家'){
@@ -1127,10 +1230,10 @@ const AI = {
       return;
     }
     // 非专家关键词 → 先尝试 LLM 对话，不可用时走本地分析路由
-    AI.pushLoading({question:q, mode:'free-chat'});
+    AI.pushLoading({question:effectiveQ, mode:'free-chat'});
     setTimeout(async ()=>{
-      const llmAns = await AI.tryLLM(q);
-      const ans = llmAns || (AI.isLLMReady() ? AI.llmFailureAnswer('自由对话') : AI.analyze(q));
+      const llmAns = await AI.tryLLM(modelQ);
+      const ans = llmAns || (AI.isLLMReady() ? AI.llmFailureAnswer('自由对话') : AI.analyze(modelQ));
       AI.finishLoadingAnswer(AI.searchEvidencePrefix()+ans);
       const side=document.getElementById('aiSide');
       if(side)side.innerHTML=AI.renderInsights();
@@ -1870,7 +1973,7 @@ ${gate.slice(0,5).map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
       return Experts.valueMarketing(cm?cm.id:null, om?om.id:null);
     }
     // 9h. 线索开发专家
-    if(/线索开发|线索挖掘|白空间|交叉销售|增购|扩容/.test(q)){
+    if(/线索开发|线索挖掘|线索判断|意向识别|需求判断|客户回复|聊天截图|白嫖|白空间|交叉销售|增购|扩容/.test(q)){
       const m=Store.customers().find(c=>q.includes(c.name)||q.includes(c.shortName||''));
       return Experts.leadDev(m?m.id:Store.myCustomers()[0]?.id||'cus_003');
     }

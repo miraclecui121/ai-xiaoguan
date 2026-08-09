@@ -305,6 +305,9 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
   display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px;height:clamp(480px,calc(100vh - var(--topbar-h) - 232px),760px);
   background:linear-gradient(180deg,#f7fbfa,#edf4f2);border:1px solid #dfe8e6;border-radius:12px;padding:12px;
 }
+.ai-layout-focus{grid-template-columns:minmax(0,1fr);height:clamp(560px,calc(100vh - var(--topbar-h) - 170px),860px)}
+.ai-layout-focus .ai-side{display:none}
+.ai-focus-toggle{white-space:nowrap}
 .ai-chat{display:flex;flex-direction:column;min-height:0;background:rgba(255,255,255,.92);border:1px solid #e1e9e7;border-radius:12px;box-shadow:0 10px 24px rgba(15,63,60,.08);overflow:hidden}
 .ai-msgs{flex:1;overflow-y:auto;padding:18px 20px;background:linear-gradient(180deg,#fbfdfc 0%,#f4f8f7 100%)}
 .ai-msg{display:flex;gap:10px;margin-bottom:16px}
@@ -334,6 +337,11 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 .ai-input-bar textarea{flex:1;min-height:44px;max-height:128px;border:1px solid #cfdad8;border-radius:9px;padding:11px 16px;background:#fff;resize:none;line-height:20px;overflow:hidden}
 .ai-input-bar textarea:focus{border-color:var(--primary-light)}
 .ai-input-bar .btn{height:44px}
+.ai-tool-btn{
+  height:44px;padding:0 12px;border:1px solid #cfdad8;border-radius:9px;background:#fff;color:var(--text-2);
+  font-size:13px;font-weight:800;white-space:nowrap;flex-shrink:0;
+}
+.ai-tool-btn:hover{border-color:var(--primary-light);background:#f4fbf9;color:var(--primary)}
 .ai-search-toggle{
   height:44px;padding:0 12px;border:1px solid #cfdad8;border-radius:9px;background:#fff;color:var(--text-2);
   font-size:13px;font-weight:700;white-space:nowrap;
@@ -509,6 +517,20 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
 
 /* 上下文chips栏 */
 .ctx-chips-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 14px;border-top:1px solid var(--border);background:#f8faff}
+.ai-attachment-bar{
+  display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 14px;border-top:1px solid var(--border);
+  background:#f7fbfa;
+}
+.ai-attachment-chip{
+  display:inline-flex;align-items:center;gap:6px;max-width:260px;padding:5px 9px;border:1px solid #c8e2df;border-radius:999px;
+  background:#eefbf8;color:#0f4f49;font-size:12px;font-weight:700;
+}
+.ai-attachment-chip b{
+  width:20px;height:20px;border-radius:6px;background:#0f766e;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;
+}
+.ai-attachment-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ai-attachment-chip i{font-style:normal;color:#78908c;cursor:pointer;padding:0 2px}
+.ai-attachment-chip i:hover{color:#b42318}
 .ctx-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 8px 4px 10px;border-radius:14px;border:1.5px solid;font-size:12.5px;font-weight:500;cursor:default;animation:chipIn .2s ease}
 @keyframes chipIn{from{opacity:0;transform:scale(0.8)}to{opacity:1;transform:scale(1)}}
 .ctx-chip-name{color:var(--text)}
@@ -679,6 +701,14 @@ table.data-table{width:100%;border-collapse:collapse;font-size:13px}
   .ai-scenario-grid{grid-template-columns:1fr}
   .ai-capability-grid{grid-template-columns:1fr}
   .ai-workflow-strip{grid-template-columns:1fr}
+  .ai-focus-toggle{height:34px;padding:0 10px;font-size:12px}
+  .ai-layout,.ai-layout-focus{height:auto;min-height:calc(100vh - var(--topbar-h) - 34px)}
+  .ai-input-bar{flex-wrap:wrap;align-items:center;padding:10px;gap:7px}
+  .ai-input-bar textarea{order:5;flex:1 0 100%;min-height:42px;padding:10px 12px}
+  .ai-input-bar .btn{height:40px;margin-left:auto}
+  .ai-mention-btn{width:40px;height:40px;font-size:16px;border-radius:12px}
+  .ai-search-toggle,.ai-tool-btn{height:40px;padding:0 10px;font-size:12px;border-radius:8px}
+  .ai-attachment-chip{max-width:100%;font-size:11.5px}
   .form-grid-2{grid-template-columns:1fr}
 }
 
