@@ -3,6 +3,7 @@ const AI = {
   messages: [],
   lastLLMError: null,
   lastSearchEvidence: null,
+  lastVisionEvidence: null,
   autoSearch: true,
   attachments: [],
   focusedChat: false,
@@ -540,7 +541,7 @@ const AI = {
     if(input) input.click();
   },
 
-  handleFileUpload(event){
+  async handleFileUpload(event){
     const files = Array.from(event?.target?.files || []);
     if(!files.length) return;
     const allowed = /^image\/(png|jpe?g|webp|gif)$/i;
@@ -551,23 +552,74 @@ const AI = {
       if(event?.target) event.target.value = '';
       return;
     }
-    selected.forEach(file=>{
-      AI.attachments.push({
-        id: 'att_' + Date.now() + '_' + Math.random().toString(16).slice(2),
-        name: file.name || '聊天截图',
-        type: file.type || 'image',
-        size: file.size || 0,
-      });
-    });
+    Toast.show(`正在处理 ${selected.length} 张图片...`, 'info');
+    const prepared = [];
+    for(const file of selected){
+      try{
+        prepared.push(await AI.prepareImageAttachment(file));
+      }catch(e){
+        console.warn('[vision] prepare image failed:', e.message);
+      }
+    }
+    if(!prepared.length){
+      Toast.show('图片读取失败，请换一张截图再试', 'error');
+      if(event?.target) event.target.value = '';
+      return;
+    }
+    prepared.forEach(item=>AI.attachments.push(item));
     AI.updateAttachmentBar();
     const input = document.getElementById('aiInput');
     if(input){
       input.placeholder = '已添加截图。请补充截图里的关键对话，或说明你要判断客户意向/需求的具体问题…';
       input.focus();
     }
-    Toast.show(`已添加 ${selected.length} 张图片。本轮临时使用，不保存到云端历史`, 'success');
+    Toast.show(`已添加 ${prepared.length} 张图片。本轮临时使用，不保存到云端历史`, 'success');
     if(files.length !== selected.length) Toast.show('Excel/PDF 和超出数量的文件已忽略，后续单独评估', 'info');
     if(event?.target) event.target.value = '';
+  },
+
+  prepareImageAttachment(file){
+    return new Promise((resolve,reject)=>{
+      const reader = new FileReader();
+      reader.onerror = ()=>reject(new Error('file_read_failed'));
+      reader.onload = ()=>{
+        const original = String(reader.result || '');
+        const img = new Image();
+        img.onerror = ()=>resolve(AI.makeAttachmentPayload(file, original));
+        img.onload = ()=>{
+          try{
+            const maxSide = 1600;
+            const scale = Math.min(1, maxSide / Math.max(img.width || maxSide, img.height || maxSide));
+            const width = Math.max(1, Math.round((img.width || maxSide) * scale));
+            const height = Math.max(1, Math.round((img.height || maxSide) * scale));
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.86);
+            resolve(AI.makeAttachmentPayload(file, dataUrl, {width, height}));
+          }catch(e){
+            resolve(AI.makeAttachmentPayload(file, original));
+          }
+        };
+        img.src = original;
+      };
+      reader.readAsDataURL(file);
+    });
+  },
+
+  makeAttachmentPayload(file, dataUrl, meta={}){
+    const approxBytes = Math.ceil(String(dataUrl||'').length * 0.75);
+    return {
+      id: 'att_' + Date.now() + '_' + Math.random().toString(16).slice(2),
+      name: file.name || '聊天截图',
+      type: dataUrl.match(/^data:([^;]+);/)?.[1] || file.type || 'image/jpeg',
+      size: approxBytes || file.size || 0,
+      dataUrl,
+      width: meta.width || 0,
+      height: meta.height || 0,
+    };
   },
 
   renderAttachmentChips(){
@@ -600,16 +652,58 @@ const AI = {
     return `已附图片：${items.map(a=>a.name).join('、')}`;
   },
 
-  buildAttachmentNote(items=AI.attachments){
+  buildAttachmentNote(items=AI.attachments, vision=null){
     if(!items.length) return '';
     const list = items.map((a,i)=>`${i+1}. ${a.name}（${a.type || 'image'}，${Math.ceil((a.size||0)/1024)}KB）`).join('\n');
+    const visionText = String(vision?.text || '').trim();
     return [
       '## 本轮用户上传了图片附件',
       list,
       '',
-      '这些图片可能是客户微信聊天截图、销售沟通记录或产品资料。当前版本先把图片作为本轮临时销售素材，不进入云端对话历史；如果当前模型/代理无法直接识别图片，请明确让用户粘贴截图中的关键对话文本，不要假装已经读图。',
+      visionText
+        ? `## 服务器视觉识别结果（${vision.provider || '视觉识别'} / ${vision.model || 'unknown'}）\n${visionText}`
+        : '这些图片可能是客户微信聊天截图、销售沟通记录或产品资料。当前版本先把图片作为本轮临时销售素材，不进入云端对话历史；如果当前模型/代理无法直接识别图片，请明确让用户粘贴截图中的关键对话文本，不要假装已经读图。',
       '回答时优先帮助用户判断：客户真实意向、水温阶段、缺失信息、白嫖/比价/拖延风险、下一步最该问什么，以及可直接发送的回复。',
     ].join('\n');
+  },
+
+  async extractAttachmentText(items, question=''){
+    AI.lastVisionEvidence = null;
+    const images = (items || []).filter(x=>x.dataUrl).slice(0,6);
+    if(!images.length) return null;
+    try{
+      Toast.show('正在识别聊天截图文字...', 'info');
+      const resp = await fetch('/api/platform/vision-ocr', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          images: images.map(x=>({ name:x.name, type:x.type, dataUrl:x.dataUrl })),
+          prompt: question || '请识别聊天截图中的对话文字，用于销售意向判断。',
+          audit: typeof Audit!=='undefined' ? Audit.modelPayload({ scope:'vision-ocr', expertId:'lead-judgment' }) : { scope:'vision-ocr', expertId:'lead-judgment' },
+        }),
+      });
+      const data = await resp.json().catch(()=>null);
+      if(!resp.ok || !data?.success){
+        const msg = data?.message || data?.error || `图片识别返回 HTTP ${resp.status}`;
+        AI.lastVisionEvidence = { ok:false, message:msg };
+        Toast.show('图片识别未完成，请补充截图里的关键对话文字', 'warn');
+        return null;
+      }
+      const result = {
+        ok:true,
+        provider:data.data?.provider || '',
+        model:data.data?.model || '',
+        text:String(data.data?.text || '').slice(0,12000),
+        imageCount:Number(data.data?.imageCount || images.length),
+      };
+      AI.lastVisionEvidence = result;
+      if(result.text.trim()) Toast.show(`已识别 ${result.imageCount} 张图片，可继续判断意向`, 'success');
+      return result;
+    }catch(e){
+      AI.lastVisionEvidence = { ok:false, message:e.message };
+      Toast.show('图片识别失败，请补充截图里的关键对话文字', 'warn');
+      return null;
+    }
   },
 
   // 输入框按键处理
@@ -1033,14 +1127,12 @@ const AI = {
     }
   },
 
-  send(){
+  async send(){
     const input=document.getElementById('aiInput');
     if(!input)return; // DOM尚未就绪
     const q=input.value.trim().replace(/@$/,'');
     const attachmentSnapshot = AI.attachments.slice();
-    const attachmentNote = AI.buildAttachmentNote(attachmentSnapshot);
     const effectiveQ = q || (attachmentSnapshot.length ? '请分析我上传的销售沟通截图/素材。' : '');
-    const modelQ = attachmentNote ? [effectiveQ, attachmentNote].filter(Boolean).join('\n\n') : effectiveQ;
     if(!effectiveQ && !AI.ctx.customers.length && !AI.ctx.opportunities.length && !AI.ctx.experts.length)return;
     if(!effectiveQ && !AI.ctx.customers.length && !AI.ctx.opportunities.length && AI.ctx.experts.length){
       Toast.show('请补充一个具体销售问题后再发送', 'warn');
@@ -1063,6 +1155,9 @@ const AI = {
     AI.renderMessages();
 
     // ===== 上下文驱动路由 =====
+    const visionResult = attachmentSnapshot.length ? await AI.extractAttachmentText(attachmentSnapshot, q) : null;
+    const attachmentNote = AI.buildAttachmentNote(attachmentSnapshot, visionResult);
+    const modelQ = attachmentNote ? [effectiveQ, attachmentNote].filter(Boolean).join('\n\n') : effectiveQ;
     const hasExpert=AI.ctx.experts.length>0;
     const hasCustomer=AI.ctx.customers.length>0;
     const hasOpp=AI.ctx.opportunities.length>0;
@@ -1073,7 +1168,9 @@ const AI = {
     if(typeof Audit!=='undefined'){
       Audit.log('ai_question_submitted', {
         action:'ai_question',
-        question:modelQ || displayQ,
+        question:attachmentSnapshot.length
+          ? [effectiveQ, attachmentLabel, visionResult?.text ? `已完成图片识别：${visionResult.imageCount || attachmentSnapshot.length} 张，识别文本 ${visionResult.text.length} 字` : '图片识别未完成'].filter(Boolean).join(' | ')
+          : (modelQ || displayQ),
         context:Audit.context(),
         expertId:expertId || AI.detectExpertIntent(modelQ) || null,
       });
@@ -1522,6 +1619,7 @@ const AI = {
     const q = String(question||'');
     const explicit = /联网|搜索|搜一下|查一下|查下|查询|查找|查到|能查|能不能查|帮我查|检索|公开信息|公开资料|公开渠道|外部情报|外部信息|外部资料|互联网|网上|官网|百度|企查查|天眼查|新闻|动态|近况|最近|最新|背景|偏好|履历|社交媒体|公众号|朋友圈|政策|招投标|中标|采购|融资|处罚|诉讼|竞品|竞争对手|市场规模|行业趋势|行业政策|现在|目前|今年|2026/.test(q);
     if(explicit) return true;
+    if(expertId === 'lead-judgment' && /服务器视觉识别结果|本轮用户上传了图片附件|聊天截图/.test(q)) return false;
     const searchFriendlyExperts = new Set(['industry-assess','industry-insight','customer-insight','lead-dev','lead-judgment','sales-visit','win-strategy']);
     if(searchFriendlyExperts.has(expertId) && /客户|公司|行业|拜访|线索|商机|竞争|风险|机会/.test(q + contextText.slice(0,500))) return true;
     if(/写话术|改写|总结|复盘|SOP|流程|模板|邮件|短信/.test(q) && !/最近|最新|新闻|政策|招投标|联网|搜索/.test(q)) return false;

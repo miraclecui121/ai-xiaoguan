@@ -1,18 +1,23 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
-import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
 import crypto from "node:crypto";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import pg from "pg";
 import QRCode from "qrcode";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const execFileAsync = promisify(execFile);
 const ENV_PATH = path.join(ROOT, ".env.local");
 const LOG_DIR = path.join(ROOT, "logs");
 const INVITE_LEDGER_FILE = path.join(ROOT, "data", "invite-ledger.json");
 const MAX_BODY_BYTES = 320 * 1024;
+const MAX_VISION_BODY_BYTES = 12 * 1024 * 1024;
 const MAX_CLOUD_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_MESSAGE_CHARS = 24000;
 const MAX_MESSAGES = 16;
@@ -40,6 +45,9 @@ const config = {
   doubaoSearchVersion: ["global", "custom"].includes(String(process.env.DOUBAO_SEARCH_VERSION || "").trim().toLowerCase())
     ? String(process.env.DOUBAO_SEARCH_VERSION).trim().toLowerCase()
     : "global",
+  glmVisionApiKey: process.env.GLM_VISION_API_KEY || process.env.ZAI_API_KEY || process.env.ZHIPUAI_API_KEY || "",
+  glmVisionBaseUrl: (process.env.GLM_VISION_BASE_URL || process.env.ZAI_BASE_URL || "https://api.z.ai/api/paas/v4").replace(/\/$/, ""),
+  glmVisionModel: process.env.GLM_VISION_MODEL || "glm-4.5v",
   publicBaseUrl: (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, ""),
   sessionSecret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex"),
   wechatAppId: process.env.WECHAT_APP_ID || process.env.WX_APP_ID || "",
@@ -170,6 +178,9 @@ const server = createServer(async (req, res) => {
           searchConfigured: Boolean(config.doubaoSearchApiKey),
           searchProvider: "Doubao Search",
           searchModel: config.doubaoSearchVersion,
+          visionConfigured: Boolean(config.glmVisionApiKey) || process.platform === "darwin",
+          visionProvider: config.glmVisionApiKey ? "GLM-4.5V" : (process.platform === "darwin" ? "macOS Vision OCR" : ""),
+          visionModel: config.glmVisionApiKey ? config.glmVisionModel : (process.platform === "darwin" ? "macos-vision" : ""),
           logStorage: config.databaseUrl ? "postgres" : "jsonl",
         },
       });
@@ -181,6 +192,10 @@ const server = createServer(async (req, res) => {
 
     if (url.pathname === "/api/platform/search" && req.method === "POST") {
       return handlePlatformSearch(req, res);
+    }
+
+    if (url.pathname === "/api/platform/vision-ocr" && req.method === "POST") {
+      return handlePlatformVisionOcr(req, res);
     }
 
     if (url.pathname === "/api/auth/wechat/status" && req.method === "GET") {
@@ -278,6 +293,7 @@ server.listen(config.port, config.host, () => {
   console.log(`AI销冠服务已启动: http://${displayHost}:${config.port}/`);
   console.log(`Platform LLM: DeepSeek ${config.model} (${state})`);
   console.log(`Platform Search: Doubao Search ${config.doubaoSearchVersion} (${searchState})`);
+  console.log(`Platform Vision: ${config.glmVisionApiKey ? `GLM ${config.glmVisionModel}` : (process.platform === "darwin" ? "macOS Vision OCR" : "missing GLM_VISION_API_KEY")}`);
   console.log(`Wechat OAuth: ${config.wechatOAuthMode} (${isWechatConfigured() ? "configured" : "missing WECHAT_APP_ID/WECHAT_APP_SECRET"})`);
   console.log(`Postgres logs: ${config.databaseUrl ? "configured" : "missing DATABASE_URL"}`);
   void ensureDatabaseReady();
@@ -769,7 +785,7 @@ async function handlePlatformChat(req, res) {
         expertId: expertId || null,
         context: audit.context || null,
         detectedCustomerName,
-        question: redactText(lastUserMessage),
+        question: redactText(redactVisionPayloadForLog(lastUserMessage)),
         model: config.model,
         durationMs: Date.now() - startedAt,
         error: `upstream_${upstream.status}`,
@@ -798,7 +814,7 @@ async function handlePlatformChat(req, res) {
       expertId: expertId || null,
       context: audit.context || null,
       detectedCustomerName,
-      question: redactText(lastUserMessage),
+      question: redactText(redactVisionPayloadForLog(lastUserMessage)),
       model: data.model || config.model,
       durationMs: Date.now() - startedAt,
       usage: data.usage || null,
@@ -823,7 +839,7 @@ async function handlePlatformChat(req, res) {
       expertId: expertId || null,
       context: audit.context || null,
       detectedCustomerName,
-      question: redactText(lastUserMessage),
+      question: redactText(redactVisionPayloadForLog(lastUserMessage)),
       model: config.model,
       durationMs: Date.now() - startedAt,
       error: message,
@@ -851,6 +867,79 @@ async function handleAuditLog(req, res) {
   const type = ["audit", "security"].includes(body.type) ? body.type : "audit";
   await writeLog(type, req, sanitizeAudit(body));
   return sendJson(res, 200, { success: true });
+}
+
+async function handlePlatformVisionOcr(req, res) {
+  if (!isAllowedOrigin(req)) {
+    await writeLog("security", req, { event: "origin_forbidden", path: req.url || "" });
+    return sendJson(res, 403, { success: false, error: "origin_forbidden" });
+  }
+  if (!checkRateLimit(`vision:${clientKey(req)}`)) {
+    await writeLog("security", req, { event: "rate_limited", path: req.url || "" });
+    return sendJson(res, 429, { success: false, error: "rate_limited" });
+  }
+
+  const raw = await readBody(req, MAX_VISION_BODY_BYTES);
+  let body;
+  try {
+    body = JSON.parse(raw || "{}");
+  } catch {
+    return sendJson(res, 400, { success: false, error: "invalid_json" });
+  }
+
+  const images = sanitizeVisionImages(body.images);
+  const audit = sanitizeAudit(body.audit || {});
+  const startedAt = Date.now();
+  if (!images.length) {
+    return sendJson(res, 400, { success: false, error: "images_required" });
+  }
+
+  try {
+    const result = config.glmVisionApiKey
+      ? await callGlmVisionOcr(images, body.prompt)
+      : await callLocalVisionOcr(images);
+    await writeLog("ai-usage", req, {
+      event: "platform_vision_ocr",
+      success: true,
+      scope: audit.scope || "vision-ocr",
+      route: audit.route || "",
+      user: audit.user || null,
+      expertId: audit.expertId || "lead-judgment",
+      context: audit.context || null,
+      question: redactText(String(body.prompt || "聊天截图识别")),
+      model: result.model,
+      durationMs: Date.now() - startedAt,
+      usage: result.usage || null,
+      imageCount: images.length,
+    });
+    return sendJson(res, 200, {
+      success: true,
+      data: {
+        provider: result.provider,
+        model: result.model,
+        text: result.text,
+        imageCount: images.length,
+        usage: result.usage || null,
+      },
+    });
+  } catch (err) {
+    await writeLog("ai-usage", req, {
+      event: "platform_vision_ocr",
+      success: false,
+      scope: audit.scope || "vision-ocr",
+      route: audit.route || "",
+      user: audit.user || null,
+      expertId: audit.expertId || "lead-judgment",
+      context: audit.context || null,
+      question: redactText(String(body.prompt || "聊天截图识别")),
+      model: config.glmVisionApiKey ? config.glmVisionModel : "macos-vision",
+      durationMs: Date.now() - startedAt,
+      error: err.message,
+      imageCount: images.length,
+    });
+    const status = /not_configured|not_supported/.test(err.message) ? 503 : 502;
+    return sendJson(res, status, { success: false, error: "vision_ocr_failed", message: err.message });
+  }
 }
 
 async function handleAdminUsageSummary(req, res) {
@@ -1384,6 +1473,106 @@ function parseDoubaoSearchResponse(data, { question, query, version }) {
     if (doc.text) lines.push(`摘要：${doc.text.slice(0, 900)}`);
   });
   return { summary: lines.join("\n").slice(0, 6000), sources };
+}
+
+function sanitizeVisionImages(input) {
+  const items = Array.isArray(input) ? input : [];
+  let totalBytes = 0;
+  return items
+    .slice(0, 6)
+    .map((item, index) => {
+      const name = sanitizeShortParam(item?.name || `image-${index + 1}`).slice(0, 120) || `image-${index + 1}`;
+      const dataUrl = String(item?.dataUrl || item?.data_url || "");
+      const match = dataUrl.match(/^data:(image\/(?:png|jpeg|jpg|webp|gif));base64,([A-Za-z0-9+/=]+)$/i);
+      if (!match) return null;
+      const mime = match[1].toLowerCase().replace("image/jpg", "image/jpeg");
+      const base64 = match[2];
+      const bytes = Math.ceil(base64.length * 0.75);
+      totalBytes += bytes;
+      if (bytes > 3 * 1024 * 1024 || totalBytes > 10 * 1024 * 1024) return null;
+      return { name, type: mime, dataUrl: `data:${mime};base64,${base64}`, base64, bytes };
+    })
+    .filter(Boolean);
+}
+
+async function callGlmVisionOcr(images, prompt = "") {
+  if (!config.glmVisionApiKey) throw new Error("vision_not_configured");
+  const content = [
+    {
+      type: "text",
+      text: [
+        "你是销售沟通截图识别助手。请识别用户上传的多张聊天截图。",
+        "任务：按图片顺序抽取可读文字，尽量还原买卖双方对话，不要编造看不清的内容。",
+        "输出：1）逐图识别文本；2）合并后的对话线索；3）若有遮挡、模糊或顺序不确定，请标注。",
+        "隐私：不要复述手机号、微信号、邮箱、验证码、地址等敏感信息，用[已脱敏]替代。",
+        prompt ? `用户补充说明：${String(prompt).slice(0, 1000)}` : "",
+      ].filter(Boolean).join("\n"),
+    },
+    ...images.map((image) => ({
+      type: "image_url",
+      image_url: { url: image.dataUrl },
+    })),
+  ];
+  const upstream = await fetchWithRetry(`${config.glmVisionBaseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${config.glmVisionApiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.glmVisionModel,
+      messages: [{ role: "user", content }],
+      max_tokens: 4096,
+      temperature: 0.1,
+      thinking: { type: "disabled" },
+    }),
+  });
+  const text = await upstream.text();
+  if (!upstream.ok) throw new Error(`glm_vision_upstream_${upstream.status}: ${text.slice(0, 300)}`);
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error("glm_vision_invalid_json");
+  }
+  const answer = data?.choices?.[0]?.message?.content || "";
+  if (!answer.trim()) throw new Error("glm_vision_empty_result");
+  return {
+    provider: "GLM-4.5V",
+    model: data.model || config.glmVisionModel,
+    text: answer.trim(),
+    usage: data.usage || null,
+  };
+}
+
+async function callLocalVisionOcr(images) {
+  if (process.platform !== "darwin") throw new Error("vision_not_supported_without_glm_key");
+  const script = path.join(ROOT, "scripts", "macos-vision-ocr.swift");
+  if (!existsSync(script)) throw new Error("macos_vision_script_missing");
+  const dir = await mkdtemp(path.join(tmpdir(), "aixg-ocr-"));
+  try {
+    const files = [];
+    for (const [index, image] of images.entries()) {
+      const ext = image.type.includes("png") ? ".png" : image.type.includes("webp") ? ".webp" : image.type.includes("gif") ? ".gif" : ".jpg";
+      const file = path.join(dir, `${index + 1}${ext}`);
+      await writeFile(file, Buffer.from(image.base64, "base64"));
+      files.push(file);
+    }
+    const { stdout, stderr } = await execFileAsync("/usr/bin/swift", [script, ...files], {
+      timeout: 60000,
+      maxBuffer: 3 * 1024 * 1024,
+    });
+    const text = String(stdout || "").trim();
+    if (!text) throw new Error(String(stderr || "macos_vision_empty_result").slice(0, 300));
+    return {
+      provider: "macOS Vision OCR",
+      model: "macos-vision",
+      text,
+      usage: null,
+    };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 function normalizeGlobalSearchDocs(data) {
@@ -1953,6 +2142,16 @@ function redactText(input) {
     .replace(/\b(?:\d[ -]*?){13,19}\b/g, "[CARD_OR_LONG_NUMBER]")
     .replace(/\b[A-Za-z0-9_=-]{32,}\b/g, "[SECRET_LIKE]")
     .slice(0, 4000);
+}
+
+function redactVisionPayloadForLog(input) {
+  const text = String(input || "");
+  if (!/服务器视觉识别结果|本轮用户上传了图片附件/.test(text)) return text;
+  const imageCount = (text.match(/\d+\.\s.+?（image\//g) || []).length;
+  const visionChars = (text.match(/## 服务器视觉识别结果[\s\S]*?(?=\n回答时优先帮助用户判断|$)/)?.[0] || "").length;
+  return text
+    .replace(/## 服务器视觉识别结果[\s\S]*?(?=\n回答时优先帮助用户判断|$)/, `## 服务器视觉识别结果\n[已脱敏：识别文本 ${visionChars} 字符，仅用于本轮模型判断，日志不保存全文]`)
+    .replace(/## 本轮用户上传了图片附件[\s\S]*?(?=\n## 服务器视觉识别结果|\n这些图片可能是|$)/, `## 本轮用户上传了图片附件\n[已脱敏：图片 ${imageCount || "若干"} 张，本轮临时处理，不保存原图]`);
 }
 
 async function writeLog(kind, req, event) {

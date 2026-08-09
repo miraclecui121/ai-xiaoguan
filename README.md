@@ -22,6 +22,7 @@ npm run build
 - 微信 OAuth 授权开始、回调、会话 Cookie
 - 平台托管 DeepSeek API 代理
 - 豆包搜索代理
+- GLM-4.5V 视觉识别代理；本机 Mac 调试可回退到 macOS Vision OCR
 - 服务端注入 11 个专家 SOUL
 - 审计日志与敏感路径拦截
 
@@ -32,6 +33,8 @@ PUBLIC_BASE_URL=https://aisales.zhixingmap.com
 SESSION_SECRET=一段随机强密钥
 DEEPSEEK_API_KEY=DeepSeek平台Key
 DOUBAO_SEARCH_API_KEY=豆包搜索Key
+GLM_VISION_API_KEY=GLM/Z.AI视觉模型Key（可选；不配置时只有Mac本机可用系统OCR调试）
+GLM_VISION_MODEL=glm-4.5v
 WECHAT_APP_ID=微信公众号或开放平台AppID
 WECHAT_APP_SECRET=对应AppSecret
 WECHAT_OAUTH_MODE=official
