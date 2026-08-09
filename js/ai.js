@@ -1158,6 +1158,7 @@ const AI = {
     const visionResult = attachmentSnapshot.length ? await AI.extractAttachmentText(attachmentSnapshot, q) : null;
     const attachmentNote = AI.buildAttachmentNote(attachmentSnapshot, visionResult);
     const modelQ = attachmentNote ? [effectiveQ, attachmentNote].filter(Boolean).join('\n\n') : effectiveQ;
+    const routeQ = attachmentSnapshot.length ? effectiveQ : modelQ;
     const hasExpert=AI.ctx.experts.length>0;
     const hasCustomer=AI.ctx.customers.length>0;
     const hasOpp=AI.ctx.opportunities.length>0;
@@ -1172,7 +1173,7 @@ const AI = {
           ? [effectiveQ, attachmentLabel, visionResult?.text ? `已完成图片识别：${visionResult.imageCount || attachmentSnapshot.length} 张，识别文本 ${visionResult.text.length} 字` : '图片识别未完成'].filter(Boolean).join(' | ')
           : (modelQ || displayQ),
         context:Audit.context(),
-        expertId:expertId || AI.detectExpertIntent(modelQ) || null,
+        expertId:expertId || AI.detectExpertIntent(routeQ) || (attachmentSnapshot.length ? 'lead-judgment' : null),
       });
     }
 
@@ -1274,7 +1275,7 @@ const AI = {
     }
 
     // 场景4: 无上下文 → 检测专家关键词/自然语言意图，用LLM+专家提示词进行通用分析
-    const intentExpertId=AI.detectExpertIntent(modelQ);
+    const intentExpertId=AI.detectExpertIntent(routeQ) || (attachmentSnapshot.length ? 'lead-judgment' : null);
     const isExpert=intentExpertId||/客户洞察|行业评估|行业洞察|线索开发|意向判断|线索判断|意向识别|需求判断|客户回复|聊天截图|客户拜访|销售拜访|解决方案|价值营销|赢单策略|商机策略|客户经营|销售SOP|SOP设计|深度洞察|洞察分析/.test(modelQ);
     if(isExpert){
       const exId=intentExpertId||(
