@@ -1,5 +1,5 @@
 /* ========== AI销冠专家系统 ==========
-   10个专家：行业评估 / 行业洞察 / 客户洞察 / 线索开发 / 客户拜访 / 解决方案 / 价值营销 / 赢单策略 / 客户经营 / 销售SOP
+   11个专家：行业评估 / 行业洞察 / 客户洞察 / 线索开发 / 意向判断 / 客户拜访 / 解决方案 / 价值营销 / 赢单策略 / 客户经营 / 销售SOP
    每个专家基于CRM数据底座（客户/联系人/商机/跟进）生成专业分析报告
    分析框架遵循内置专家提示词和线上方法论质量门控
    embedTo: ''=仅AI面板, 'customer'=嵌入客户详情, 'opportunity'=嵌入商机详情 */
@@ -18,6 +18,9 @@ const Experts = {
       _secretPrompt:'' },  // ⚠️ 核心机密，严禁暴露到前端UI
     { id:'lead-dev',         name:'线索开发',   icon:'拓', color:'#0d9488', desc:'识别可切入部门、触达对象和优先级线索',
       ctxType:'customer', ctxLabel:'选择客户', embedTo:'customer', loadingMsg:'正在分析线索开发机会与白空间',
+      _secretPrompt:'' },  // ⚠️ 核心机密，严禁暴露到前端UI
+    { id:'lead-judgment',    name:'意向判断',   icon:'判', color:'#f97316', desc:'解析客户主动咨询与聊天记录，判断真实需求和跟进水温',
+      ctxType:'none', ctxLabel:'粘贴对话或上传截图', embedTo:'', loadingMsg:'正在判断客户意向水温与需求真实性',
       _secretPrompt:'' },  // ⚠️ 核心机密，严禁暴露到前端UI
     { id:'sales-visit',      name:'客户拜访',   icon:'访', color:'#059669', desc:'生成拜访目标、提问路径和会后推进动作',
       ctxType:'opportunity', ctxLabel:'选择商机', embedTo:'opportunity', loadingMsg:'正在制定拜访策略与话题清单',
@@ -55,6 +58,7 @@ const Experts = {
   getContexts(expertId){
     const ex=Experts.get(expertId);
     if(!ex) return [];
+    if(ex.ctxType==='none') return [];
     if(ex.ctxType==='customer'){
       return Store.myCustomers().map(c=>({id:c.id, name:c.name, sub:c.industry+' · '+c.level+'级'}));
     }
@@ -88,6 +92,7 @@ const Experts = {
       case 'industry-insight': return Experts.industryInsight(customerId);
       case 'customer-insight': return Experts.customerInsight(customerId);
       case 'lead-dev':         return Experts.leadDev(customerId);
+      case 'lead-judgment':    return Experts.leadJudgment(customerId);
       case 'sales-visit':      return Experts.salesVisit(oppId||customerId);
       case 'win-strategy':     return Experts.oppStrategy(oppId||customerId);
       case 'solution':         return Experts.solution(customerId, oppId);
@@ -1253,6 +1258,34 @@ const Experts = {
     actions.forEach((a,i)=>html+=`${i+1}. ${a}\n`);
 
     html+=`\n> **📋 线索开发纲领：${c.shortName||c.name}线索开发评分${score}分(${rating})。${whiteSpace.length?'白空间产品'+whiteSpace.length+'个待开发，':''}以EDM营销模板触达关键人，逐步拓展产品覆盖面。**`;
+    return html;
+  },
+
+  // ================================================================
+  //  5. 意向判断专家 — 用于客户主动咨询后的对话分诊
+  //  重点判断：意向水温 / 需求真实性 / 白嫖风险 / 下一问 / 流转去向
+  // ================================================================
+  leadJudgment(customerId){
+    const c=customerId ? Store.customer(customerId) : null;
+    let html=`## 意向判断专家：客户主动咨询分诊\n\n`;
+    if(c){
+      html+=`> 可参考客户：${c.name} ｜ ${c.industry || '行业未填写'} ｜ ${c.level || '未分级'}级\n\n`;
+    }else{
+      html+=`> 适用场景：客户主动找过来、发来一段微信/私信/电话纪要，你需要判断对方是真需求、比价、试探、拖延还是白嫖方案风险。\n\n`;
+    }
+    html+=`### 建议你这样输入\n\n`;
+    html+=`1. 先点击输入框旁的「图片」上传聊天截图，或直接粘贴已脱敏的聊天文字。\n`;
+    html+=`2. 补充你卖的产品/服务、价格档位、什么客户优先接、什么客户不接。\n`;
+    html+=`3. 直接问：这个客户现在值不值得跟？下一句该怎么回？\n\n`;
+    html+=`### 我会输出\n\n`;
+    html+=`| 判断项 | 说明 |\n|---|---|\n`;
+    html+=`| 当前水温 | 0-30 / 30-60 / 60-90 / 90-100，判断客户处在哪个沟通阶段 |\n`;
+    html+=`| 真实需求 | 分清已确认事实、合理推测和待确认信息 |\n`;
+    html+=`| 风险信号 | 识别比价、套方案、拖延、无决策权、预算不实等信号 |\n`;
+    html+=`| 下一问 | 给出最值得问的 3 个问题，不一次性审问客户 |\n`;
+    html+=`| 流转建议 | 继续跟进、升级给负责人、暂缓培育或礼貌婉拒 |\n`;
+    html+=`| 可发送回复 | 生成一段自然、克制、不乱承诺的回复 |\n\n`;
+    html+=`> **使用边界**：聊天截图请先脱敏；当前专家负责判断与沟通建议，不替代报价审批、合同判断或最终商业决策。`;
     return html;
   },
 

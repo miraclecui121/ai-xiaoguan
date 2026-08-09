@@ -13,10 +13,10 @@ const Dashboard = {
     <div class="expert-entry-card" onclick="App.openExpertsEntry()">
       <div class="expert-entry-card-icon">冠</div>
       <div class="expert-entry-card-body">
-        <div class="expert-entry-card-title">不知道从哪里开始？让10个销售专家先帮你看一遍</div>
-        <div class="expert-entry-card-desc">客户洞察、商机判断、拜访准备、赢单策略、销售SOP，一次进入都能问。</div>
+        <div class="expert-entry-card-title">不知道从哪里开始？让11个销售专家先帮你看一遍</div>
+        <div class="expert-entry-card-desc">客户洞察、意向判断、商机判断、拜访准备、赢单策略、销售SOP，一次进入都能问。</div>
       </div>
-      <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();App.openExpertsEntry()">进入10个专家</button>
+      <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();App.openExpertsEntry()">进入11个专家</button>
     </div>
     <!-- 核心指标 -->
     <div class="stat-grid">

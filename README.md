@@ -22,7 +22,7 @@ npm run build
 - 微信 OAuth 授权开始、回调、会话 Cookie
 - 平台托管 DeepSeek API 代理
 - 豆包搜索代理
-- 服务端注入 10 个专家 SOUL
+- 服务端注入 11 个专家 SOUL
 - 审计日志与敏感路径拦截
 
 Render 必填环境变量：

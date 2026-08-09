@@ -93,7 +93,7 @@ const Auth = {
         </div>
         <div class="login-demo-hint">
           <div class="login-hint-title">首次登录后进入演示空间</div>
-          <div class="login-hint-item"><span class="badge badge-gold">演示体验</span> 默认演示数据 · 可体验 10 个销售专家视角</div>
+          <div class="login-hint-item"><span class="badge badge-gold">演示体验</span> 默认演示数据 · 可体验 11 个销售专家视角</div>
           <button class="login-hint-item login-demo-account" onclick="Auth.loginWithWechat()" type="button"><span class="badge badge-green">个人版</span> 微信登录后输入邀请码开通 · PC/手机同一空间</button>
           <div class="login-hint-item"><span class="badge badge-gray">切换微信</span> 退出当前身份后，用另一个微信重新授权</div>
         </div>

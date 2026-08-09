@@ -4,6 +4,7 @@
     "industry-insight":"行业洞察",
     "customer-insight":"客户洞察",
     "lead-dev":"线索开发",
+    "lead-judgment":"意向判断",
     "sales-visit":"客户拜访",
     "solution":"解决方案",
     "value-marketing":"价值营销",

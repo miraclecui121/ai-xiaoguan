@@ -745,7 +745,7 @@ const AI = {
         id:'lead-judgment',
         title:'客户回复后，值不值得跟',
         desc:'粘贴聊天记录或上传截图，判断意向水温',
-        expertId:'lead-dev',
+        expertId:'lead-judgment',
         prompt:'请按「线索判断助手」帮我判断这个线索。\n\n我的业务/产品：【补充你卖什么、价格/交付方式】\n目标客户：【补充客户类型】\n客户最近回复/聊天记录：【粘贴文字；也可以点击“图片”上传聊天截图后补充关键对话】\n\n请输出：\n1. 当前意向水温（0-30/30-60/60-90/90-100）\n2. 已确认信息和缺失信息\n3. 这是真需求、比价、试探、拖延，还是白嫖方案风险\n4. 下一步最值得问的 3 个问题\n5. 建议继续跟进、升级、暂缓还是婉拒\n6. 一段我可以直接发给客户的自然回复',
       },
       {
@@ -826,7 +826,7 @@ const AI = {
   renderCapabilityGrid(){
     const groups=[
       {title:'选市场', items:['industry-assess','industry-insight'], note:'判断行业是否值得投入，以及该从什么变化切入客户。'},
-      {title:'看客户', items:['customer-insight','lead-dev','sales-visit'], note:'拆客户场景、线索入口和拜访前后的关键动作。'},
+      {title:'看客户', items:['customer-insight','lead-dev','lead-judgment','sales-visit'], note:'拆客户场景、线索入口、主动咨询和拜访前后的关键动作。'},
       {title:'推项目', items:['solution','value-marketing','win-strategy'], note:'把需求转成方案、价值和赢单推进策略。'},
       {title:'做经营', items:['customer-mgmt','sop-design'], note:'沉淀长期账户经营节奏和可复制的过程标准。'},
     ];
@@ -861,6 +861,7 @@ const AI = {
       {label:'行业评估', id:'industry-assess'},
       {label:'行业洞察', id:'industry-insight'},
       {label:'线索开发', id:'lead-dev'},
+      {label:'意向判断', id:'lead-judgment'},
       {label:'客户拜访', id:'sales-visit'},
       {label:'解决方案', id:'solution'},
       {label:'价值营销', id:'value-marketing'},
@@ -1177,12 +1178,13 @@ const AI = {
 
     // 场景4: 无上下文 → 检测专家关键词/自然语言意图，用LLM+专家提示词进行通用分析
     const intentExpertId=AI.detectExpertIntent(modelQ);
-    const isExpert=intentExpertId||/客户洞察|行业评估|行业洞察|线索开发|线索判断|意向识别|需求判断|客户回复|聊天截图|客户拜访|销售拜访|解决方案|价值营销|赢单策略|商机策略|客户经营|销售SOP|SOP设计|深度洞察|洞察分析/.test(modelQ);
+    const isExpert=intentExpertId||/客户洞察|行业评估|行业洞察|线索开发|意向判断|线索判断|意向识别|需求判断|客户回复|聊天截图|客户拜访|销售拜访|解决方案|价值营销|赢单策略|商机策略|客户经营|销售SOP|SOP设计|深度洞察|洞察分析/.test(modelQ);
     if(isExpert){
       const exId=intentExpertId||(
                  modelQ.includes('行业评估')?'industry-assess':
                  modelQ.includes('行业洞察')?'industry-insight':
-                 /线索开发|线索判断|意向识别|需求判断|客户回复|聊天截图/.test(modelQ)?'lead-dev':
+                 /意向判断|线索判断|意向识别|需求判断|客户回复|聊天截图/.test(modelQ)?'lead-judgment':
+                 modelQ.includes('线索开发')?'lead-dev':
                  modelQ.includes('客户拜访')||modelQ.includes('销售拜访')?'sales-visit':
                  modelQ.includes('赢单策略')||modelQ.includes('商机策略')?'win-strategy':
                  modelQ.includes('解决方案')?'solution':
@@ -1520,7 +1522,7 @@ const AI = {
     const q = String(question||'');
     const explicit = /联网|搜索|搜一下|查一下|查下|查询|查找|查到|能查|能不能查|帮我查|检索|公开信息|公开资料|公开渠道|外部情报|外部信息|外部资料|互联网|网上|官网|百度|企查查|天眼查|新闻|动态|近况|最近|最新|背景|偏好|履历|社交媒体|公众号|朋友圈|政策|招投标|中标|采购|融资|处罚|诉讼|竞品|竞争对手|市场规模|行业趋势|行业政策|现在|目前|今年|2026/.test(q);
     if(explicit) return true;
-    const searchFriendlyExperts = new Set(['industry-assess','industry-insight','customer-insight','lead-dev','sales-visit','win-strategy']);
+    const searchFriendlyExperts = new Set(['industry-assess','industry-insight','customer-insight','lead-dev','lead-judgment','sales-visit','win-strategy']);
     if(searchFriendlyExperts.has(expertId) && /客户|公司|行业|拜访|线索|商机|竞争|风险|机会/.test(q + contextText.slice(0,500))) return true;
     if(/写话术|改写|总结|复盘|SOP|流程|模板|邮件|短信/.test(q) && !/最近|最新|新闻|政策|招投标|联网|搜索/.test(q)) return false;
     return false;
@@ -1715,6 +1717,7 @@ const AI = {
       'industry-insight': ['这个行业近期有哪些销售机会？', '行业趋势怎么转成客户话题？', '我该和客户聊哪些经营变化？'],
       'customer-insight': ['帮我做客户360度洞察', '客户可能的关键痛点是什么？', '下一步要验证哪些假设？'],
       'lead-dev': ['哪些客户更像潜在线索？', '第一触达该找谁、说什么？', '如何给线索打优先级？'],
+      'lead-judgment': ['客户这样回复，是真需求还是试探？', '这段聊天现在水温是多少？', '下一句我该怎么回更合适？'],
       'value-marketing': ['怎么量化客户价值？', 'ROI 应该怎么算给客户看？', '如何把产品价值变成业务价值？'],
       'customer-mgmt': ['这个客户怎么做长期经营？', '关系层级怎么提升？', '增购续约机会在哪里？'],
       'sop-design': ['帮我设计销售阶段SOP', '每个阶段的质量门应该是什么？', '销售流程哪里容易失控？'],
@@ -1972,12 +1975,17 @@ ${gate.slice(0,5).map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
       const om=Store.opportunities().find(o=>q.includes(o.name));
       return Experts.valueMarketing(cm?cm.id:null, om?om.id:null);
     }
-    // 9h. 线索开发专家
-    if(/线索开发|线索挖掘|线索判断|意向识别|需求判断|客户回复|聊天截图|白嫖|白空间|交叉销售|增购|扩容/.test(q)){
+    // 9h. 意向判断专家
+    if(/意向判断|线索判断|意向识别|需求判断|客户回复|聊天截图|白嫖/.test(q)){
+      const m=Store.customers().find(c=>q.includes(c.name)||q.includes(c.shortName||''));
+      return Experts.leadJudgment(m?m.id:null);
+    }
+    // 9i. 线索开发专家
+    if(/线索开发|线索挖掘|白空间|交叉销售|增购|扩容/.test(q)){
       const m=Store.customers().find(c=>q.includes(c.name)||q.includes(c.shortName||''));
       return Experts.leadDev(m?m.id:Store.myCustomers()[0]?.id||'cus_003');
     }
-    // 9i. 客户经营专家
+    // 9j. 客户经营专家
     if(/客户经营|生命周期|续约|客户维护|客户流失/.test(q)){
       const m=Store.customers().find(c=>q.includes(c.name)||q.includes(c.shortName||''));
       return Experts.customerMgmt(m?m.id:Store.myCustomers()[0]?.id||'cus_003');

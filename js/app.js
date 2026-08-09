@@ -116,8 +116,8 @@ const App = {
     bubble.id = 'expertGuideBubble';
     bubble.className = 'expert-guide-bubble';
     bubble.innerHTML = `
-      <div class="expert-guide-title">10个销售专家在这里</div>
-      <div class="expert-guide-text">可以分析客户、商机、拜访、赢单策略，直接给下一步动作。</div>
+      <div class="expert-guide-title">11个销售专家在这里</div>
+      <div class="expert-guide-text">可以分析客户、意向、商机、拜访、赢单策略，直接给下一步动作。</div>
       <div class="expert-guide-actions">
         <button class="expert-guide-primary" onclick="App.openExpertsEntry()">试一下</button>
         <button class="expert-guide-ghost" onclick="App.dismissExpertGuide()">知道了</button>
@@ -348,7 +348,7 @@ const App = {
       </div>
       <div id="aiModelConfigBody" class="settings-collapse-body" style="${aiStyle}">
       <div style="margin-bottom:12px;padding:10px 12px;background:#eefaf6;border:1px solid #bfe9dc;border-radius:6px;font-size:13px;color:var(--text-2);line-height:1.7">
-        <b>个人版默认体验</b>：AI销冠平台已通过本机代理接入 DeepSeek V4-Flash，C 端用户无需填写 API Key，即可体验 10 个销售分析视角的真实对话。<br>
+        <b>个人版默认体验</b>：AI销冠平台已通过本机代理接入 DeepSeek V4-Flash，C 端用户无需填写 API Key，即可体验 11 个销售分析视角的真实对话。<br>
         <b>B 端自配说明</b>：下方配置区用于证明企业客户可接入自己的 OpenAI Chat Completions 兼容模型。若企业填写并设为默认，将优先使用企业自配模型；未配置时自动回到平台模型。生产环境应由后端加密保存企业 Key，不应下发到浏览器。
       </div>
       <div style="margin-bottom:12px;padding:10px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;font-size:13px;color:var(--text-2);line-height:1.7">
