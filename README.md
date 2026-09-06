@@ -47,6 +47,8 @@ SELF_KEEPALIVE_URL=https://ai-xiaoguan-caqq.onrender.com
 
 Render Free Web Service 空闲后会休眠，用户第一次访问可能先看到 Render 的 “Service waking up” 页面。当前代码提供 `/api/health` 轻量健康检查，并通过 `ENABLE_SELF_KEEPALIVE=true` 每 10 分钟自检一次，尽量避免日常空闲休眠。
 
+仓库还包含 `.github/workflows/keepalive.yml`，会每 10 分钟从 GitHub Actions 访问一次 Render 原始健康检查地址，作为外部唤醒补充。
+
 这只是免费版缓解方案。若要彻底避免客户看到 Render 唤醒页，需要把 Web Service 升级为付费常驻实例。
 
 微信后台需要把网页授权域名配置为：
