@@ -26,12 +26,15 @@ const RATE_LIMIT_MAX = 40;
 const WECHAT_STATE_TTL_MS = 10 * 60 * 1000;
 const WECHAT_QR_TTL_MS = 5 * 60 * 1000;
 const WECHAT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const SELF_KEEPALIVE_INTERVAL_MS = 10 * 60 * 1000;
+const SELF_KEEPALIVE_TIMEOUT_MS = 10 * 1000;
 const rateBuckets = new Map();
 const wechatQrSessions = new Map();
 const expertSoulCache = new Map();
 let pgPool = null;
 let pgInitPromise = null;
 let pgWarnedAt = 0;
+let selfKeepAliveTimer = null;
 
 loadEnvFile(ENV_PATH);
 
@@ -59,6 +62,8 @@ const config = {
   adminLogToken: process.env.ADMIN_LOG_TOKEN || "",
   databaseUrl: process.env.DATABASE_URL || "",
   databaseSsl: String(process.env.DATABASE_SSL || "").toLowerCase() === "true",
+  selfKeepAlive: shouldEnableSelfKeepAlive(),
+  selfKeepAliveUrl: (process.env.SELF_KEEPALIVE_URL || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_BASE_URL || "").replace(/\/$/, ""),
 };
 
 const DB_SCHEMA_SQL = `
@@ -165,6 +170,18 @@ const server = createServer(async (req, res) => {
 
     if ((url.pathname === "/ops" || url.pathname === "/ops/") && req.method === "GET") {
       return serveStatic("/ops.html", req, res);
+    }
+
+    if ((url.pathname === "/api/health" || url.pathname === "/api/warmup") && req.method === "GET") {
+      return sendJson(res, 200, {
+        success: true,
+        data: {
+          status: "ok",
+          service: "ai-xiaoguan",
+          uptimeSeconds: Math.round(process.uptime()),
+          now: new Date().toISOString(),
+        },
+      });
     }
 
     if (url.pathname === "/api/platform/status" && req.method === "GET") {
@@ -297,7 +314,50 @@ server.listen(config.port, config.host, () => {
   console.log(`Wechat OAuth: ${config.wechatOAuthMode} (${isWechatConfigured() ? "configured" : "missing WECHAT_APP_ID/WECHAT_APP_SECRET"})`);
   console.log(`Postgres logs: ${config.databaseUrl ? "configured" : "missing DATABASE_URL"}`);
   void ensureDatabaseReady();
+  startSelfKeepAlive();
 });
+
+function isTruthy(value) {
+  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+function shouldEnableSelfKeepAlive() {
+  const explicit = String(process.env.ENABLE_SELF_KEEPALIVE || "").trim();
+  if (explicit) return isTruthy(explicit);
+  return Boolean(process.env.RENDER || process.env.RENDER_EXTERNAL_URL || process.env.RENDER_SERVICE_ID);
+}
+
+function startSelfKeepAlive() {
+  if (!config.selfKeepAlive) return;
+  if (!config.selfKeepAliveUrl) {
+    console.log("Self keepalive: enabled but missing SELF_KEEPALIVE_URL/PUBLIC_BASE_URL");
+    return;
+  }
+  const target = `${config.selfKeepAliveUrl}/api/health`;
+  const ping = async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), SELF_KEEPALIVE_TIMEOUT_MS);
+    try {
+      const response = await fetch(target, {
+        method: "GET",
+        headers: {
+          "User-Agent": "AI-Xiaoguan-KeepAlive/1.0",
+          "Cache-Control": "no-store",
+        },
+        signal: controller.signal,
+      });
+      console.log(`Self keepalive: ${response.status} ${target}`);
+    } catch (err) {
+      console.log(`Self keepalive failed: ${err.message}`);
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+  console.log(`Self keepalive: enabled, interval=${SELF_KEEPALIVE_INTERVAL_MS / 60000}m, target=${target}`);
+  selfKeepAliveTimer = setInterval(ping, SELF_KEEPALIVE_INTERVAL_MS);
+  selfKeepAliveTimer.unref?.();
+  setTimeout(ping, 60 * 1000).unref?.();
+}
 
 function isWechatConfigured() {
   return Boolean(config.wechatAppId && config.wechatAppSecret);

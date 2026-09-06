@@ -39,7 +39,15 @@ WECHAT_APP_ID=微信公众号或开放平台AppID
 WECHAT_APP_SECRET=对应AppSecret
 WECHAT_OAUTH_MODE=official
 WECHAT_OAUTH_SCOPE=snsapi_userinfo
+ENABLE_SELF_KEEPALIVE=true
+SELF_KEEPALIVE_URL=https://ai-xiaoguan-caqq.onrender.com
 ```
+
+### Render Free 冷启动处理
+
+Render Free Web Service 空闲后会休眠，用户第一次访问可能先看到 Render 的 “Service waking up” 页面。当前代码提供 `/api/health` 轻量健康检查，并通过 `ENABLE_SELF_KEEPALIVE=true` 每 10 分钟自检一次，尽量避免日常空闲休眠。
+
+这只是免费版缓解方案。若要彻底避免客户看到 Render 唤醒页，需要把 Web Service 升级为付费常驻实例。
 
 微信后台需要把网页授权域名配置为：
 
@@ -72,7 +80,7 @@ Start Command: npm start
 线上验证命令：
 
 ```bash
-curl https://ai-xiaoguan.onrender.com/api/auth/wechat/status
+curl https://ai-xiaoguan-caqq.onrender.com/api/auth/wechat/status
 curl https://aisales.zhixingmap.com/api/auth/wechat/status
 ```
 
@@ -80,7 +88,7 @@ curl https://aisales.zhixingmap.com/api/auth/wechat/status
 
 ## 当前线上地址
 
-- Render 临时地址：<https://ai-xiaoguan.onrender.com>
+- Render 临时地址：<https://ai-xiaoguan-caqq.onrender.com>
 - 目标域名：<https://aisales.zhixingmap.com>
 
 ## DNS 配置
@@ -90,7 +98,7 @@ curl https://aisales.zhixingmap.com/api/auth/wechat/status
 ```text
 主机记录: aisales
 记录类型: CNAME
-记录值: ai-xiaoguan.onrender.com.
+记录值: ai-xiaoguan-caqq.onrender.com.
 ```
 
 如果当前存在旧记录 `aisales CNAME custom-domains.chatgpt.site.`，把它替换为上面的 Render 记录。不要修改 `coach`、邮箱、根域名 `@`、`www` 等其它记录。

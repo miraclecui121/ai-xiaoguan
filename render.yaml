@@ -11,6 +11,10 @@ services:
         value: 22
       - key: PUBLIC_BASE_URL
         value: https://aisales.zhixingmap.com
+      - key: ENABLE_SELF_KEEPALIVE
+        value: "true"
+      - key: SELF_KEEPALIVE_URL
+        value: https://ai-xiaoguan-caqq.onrender.com
       - key: DEEPSEEK_BASE_URL
         value: https://api.deepseek.com/v1
       - key: DEEPSEEK_MODEL
