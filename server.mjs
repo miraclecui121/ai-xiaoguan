@@ -28,12 +28,15 @@ const WECHAT_QR_TTL_MS = 5 * 60 * 1000;
 const WECHAT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SELF_KEEPALIVE_INTERVAL_MS = 10 * 60 * 1000;
 const SELF_KEEPALIVE_TIMEOUT_MS = 10 * 1000;
+const DB_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
 const rateBuckets = new Map();
 const wechatQrSessions = new Map();
 const expertSoulCache = new Map();
 let pgPool = null;
 let pgInitPromise = null;
 let pgWarnedAt = 0;
+let pgUnavailableUntil = 0;
+let pgLastError = "";
 let selfKeepAliveTimer = null;
 
 loadEnvFile(ENV_PATH);
@@ -198,7 +201,8 @@ const server = createServer(async (req, res) => {
           visionConfigured: Boolean(config.glmVisionApiKey) || process.platform === "darwin",
           visionProvider: config.glmVisionApiKey ? "GLM-4.5V" : (process.platform === "darwin" ? "macOS Vision OCR" : ""),
           visionModel: config.glmVisionApiKey ? config.glmVisionModel : (process.platform === "darwin" ? "macos-vision" : ""),
-          logStorage: config.databaseUrl ? "postgres" : "jsonl",
+          logStorage: databaseRuntimeStatus().logStorage,
+          database: databaseRuntimeStatus(),
         },
       });
     }
@@ -313,7 +317,7 @@ server.listen(config.port, config.host, () => {
   console.log(`Platform Vision: ${config.glmVisionApiKey ? `GLM ${config.glmVisionModel}` : (process.platform === "darwin" ? "macOS Vision OCR" : "missing GLM_VISION_API_KEY")}`);
   console.log(`Wechat OAuth: ${config.wechatOAuthMode} (${isWechatConfigured() ? "configured" : "missing WECHAT_APP_ID/WECHAT_APP_SECRET"})`);
   console.log(`Postgres logs: ${config.databaseUrl ? "configured" : "missing DATABASE_URL"}`);
-  void ensureDatabaseReady();
+  void ensureDatabaseReady().catch((err) => warnPostgresOnce(`[postgres-log] startup fallback: ${err.message}`));
   startSelfKeepAlive();
 });
 
@@ -2488,25 +2492,74 @@ async function buildUsageDetail({ days = 7, limit = 300, query = "" } = {}) {
 
 async function ensureDatabaseReady() {
   if (!config.databaseUrl) return null;
+  if (pgPool) return pgPool;
+  if (pgUnavailableUntil > Date.now()) return null;
   if (pgInitPromise) return pgInitPromise;
   pgInitPromise = (async () => {
     const { Pool } = pg;
-    pgPool = new Pool({
+    const pool = new Pool({
       connectionString: config.databaseUrl,
       max: 5,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
       ssl: config.databaseSsl ? { rejectUnauthorized: false } : false,
     });
-    await pgPool.query(DB_SCHEMA_SQL);
+    pool.on("error", (err) => {
+      pgPool = null;
+      pgUnavailableUntil = Date.now() + DB_RETRY_COOLDOWN_MS;
+      pgLastError = err.message || String(err);
+      warnPostgresOnce(`[postgres-log] pool error, fallback for ${DB_RETRY_COOLDOWN_MS / 60000}m: ${pgLastError}`);
+    });
+    try {
+      await pool.query(DB_SCHEMA_SQL);
+    } catch (err) {
+      await pool.end().catch(() => {});
+      throw err;
+    }
+    pgPool = pool;
     console.log("[postgres-log] usage_logs schema ready");
+    pgUnavailableUntil = 0;
+    pgLastError = "";
     return pgPool;
   })().catch((err) => {
     pgPool = null;
     pgInitPromise = null;
-    throw err;
+    pgUnavailableUntil = Date.now() + DB_RETRY_COOLDOWN_MS;
+    pgLastError = err.message || String(err);
+    warnPostgresOnce(`[postgres-log] unavailable, fallback for ${DB_RETRY_COOLDOWN_MS / 60000}m: ${pgLastError}`);
+    return null;
   });
   return pgInitPromise;
+}
+
+function databaseRuntimeStatus() {
+  if (!config.databaseUrl) {
+    return {
+      configured: false,
+      available: false,
+      logStorage: "jsonl",
+      mode: "local-fallback",
+      message: "DATABASE_URL 未配置，日志仅写入本地临时文件。",
+    };
+  }
+  if (pgPool) {
+    return {
+      configured: true,
+      available: true,
+      logStorage: "postgres",
+      mode: "postgres",
+      message: "数据库可用，日志和云同步写入 Postgres。",
+    };
+  }
+  const coolingDown = pgUnavailableUntil > Date.now();
+  return {
+    configured: true,
+    available: false,
+    logStorage: "jsonl",
+    mode: coolingDown ? "postgres-cooldown" : "postgres-pending",
+    retryAfterSeconds: coolingDown ? Math.ceil((pgUnavailableUntil - Date.now()) / 1000) : 0,
+    message: "Postgres 当前不可用，应用已降级为本地临时日志；主功能继续可用。",
+  };
 }
 
 async function writeLogToPostgres(entry) {
